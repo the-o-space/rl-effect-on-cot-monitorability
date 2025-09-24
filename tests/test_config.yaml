@@ -1,0 +1,8 @@
+training:
+  episodes: 1
+
+model:
+  path: "models/mock/mock_model.pt"
+
+dataset:
+  path: "datasets/mock/mock_dataset.json"

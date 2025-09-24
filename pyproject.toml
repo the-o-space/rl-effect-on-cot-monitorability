@@ -1,0 +1,7 @@
+[project]
+name = "rl-effect-on-cot-monitorability"
+version = "0.1.0"
+description = "How does RL post-training affect CoT monitorability? SPAR project under mentorship of Kei Nishimura Gasparian"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []

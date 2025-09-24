@@ -1,0 +1,14 @@
+training:
+  episodes: 1000
+  learning_rate: 0.001
+
+env:
+  name: "CartPole-v1"
+
+model:
+  name: "PPO"
+  policy: "MlpPolicy"
+  path: "models/production/ppo_model.pt"
+
+dataset:
+  path: "datasets/production/cartpole_data.json"
