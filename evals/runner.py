@@ -22,6 +22,10 @@ def main(
     3. Handles results logging
     """
     eval_dir = Path(__file__).parent / eval_name
+
+    logger.configure(
+        service_name="evals-runner",
+    )
     
     if not eval_dir.exists():
         logger.error(f"Eval directory not found: {eval_dir}")

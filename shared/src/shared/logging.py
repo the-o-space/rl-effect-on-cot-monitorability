@@ -10,7 +10,6 @@ import logfire
 # Note: LOGFIRE_TOKEN and LOGFIRE_ENVIRONMENT are the standard env vars
 logfire.configure(
     token=os.getenv("LOGFIRE_TOKEN"),
-    service_name="rl-cot-monitorability",
     environment=os.getenv("LOGFIRE_ENVIRONMENT"),
 )
 
