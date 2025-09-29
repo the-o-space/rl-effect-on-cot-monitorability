@@ -2,16 +2,13 @@
 Example evaluation implementation.
 """
 import json
-import logging
 from pathlib import Path
 from typing import Dict, Any, List
 
-from shared import get_project_root
+from shared import get_project_root, logger
 from shared.models import OpenRouterProvider
 
 from metrics import compute_metrics
-
-logger = logging.getLogger(__name__)
 
 
 def load_dataset(dataset_path: str) -> List[Dict[str, Any]]:
@@ -19,7 +16,7 @@ def load_dataset(dataset_path: str) -> List[Dict[str, Any]]:
     project_root = get_project_root()
     full_path = project_root / dataset_path
     
-    logger.info(f"Loading dataset from {full_path}...")
+    logger.info(f"Loading dataset from {dataset_path}...")
     with open(full_path) as f:
         data = json.load(f)
     
@@ -36,76 +33,92 @@ def run_eval(config: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Dict containing evaluation results and metrics
     """
-    # Load dataset
-    dataset_path = config["eval"]["dataset"]["path"]
-    dataset = load_dataset(dataset_path)
-    logger.info(f"Loaded {len(dataset)} examples")
+    eval_name = config["eval"]["name"]
     
-    # Initialize model provider
-    model_config = config["model"]
-    provider_type = model_config["provider"]
-    
-    if provider_type == "openrouter":
-        provider = OpenRouterProvider(
-            model_id=model_config["model_id"],
-            temperature=model_config.get("temperature", 0.7),
-            max_tokens=model_config.get("max_tokens", 512)
-        )
-    else:
-        raise ValueError(f"Unsupported provider: {provider_type}")
-    
-    logger.info(f"Initialized provider: {provider_type} with model {model_config['model_id']}")
-    
-    # Run eval
-    results = []
-    for i, example in enumerate(dataset):
-        logger.info(f"Processing example {i+1}/{len(dataset)}")
+    with logger.span(f"run_eval.{eval_name}"):
+        # Load dataset
+        dataset_path = config["eval"]["dataset"]["path"]
+        dataset = load_dataset(dataset_path)
+        logger.info(f"Loaded dataset", num_examples=len(dataset))
         
-        prompt = example.get("prompt", example.get("question", ""))
-        expected = example.get("expected", example.get("answer", ""))
+        # Initialize model provider
+        model_config = config["model"]
+        provider_type = model_config["provider"]
         
-        try:
-            response_data = provider.generate_with_metadata(
-                prompt=prompt,
+        if provider_type == "openrouter":
+            provider = OpenRouterProvider(
+                model_id=model_config["model_id"],
                 temperature=model_config.get("temperature", 0.7),
                 max_tokens=model_config.get("max_tokens", 512)
             )
-            
-            results.append({
-                "prompt": prompt,
-                "expected": expected,
-                "generated": response_data["response"],
-                "metadata": response_data["metadata"]
-            })
-            
-            if config.get("output", {}).get("verbose", False):
-                logger.info(f"Response: {response_data['response'][:100]}...")
+        else:
+            raise ValueError(f"Unsupported provider: {provider_type}")
         
-        except Exception as e:
-            logger.error(f"Failed to generate response for example {i}: {e}")
-            results.append({
-                "prompt": prompt,
-                "expected": expected,
-                "generated": None,
-                "error": str(e)
-            })
-    
-    # Compute metrics
-    metric_names = config.get("metrics", [])
-    metrics = compute_metrics(results, metric_names)
-    
-    logger.info(f"Metrics: {metrics}")
-    
-    # Save results if output directory specified
-    output_config = config.get("output", {})
-    if results_dir := output_config.get("results_dir"):
-        save_results(results, metrics, config, results_dir)
-    
-    return {
-        "results": results,
-        "metrics": metrics,
-        "config": config
-    }
+        logger.info(
+            f"Initialized provider",
+            provider=provider_type,
+            model=model_config['model_id']
+        )
+        
+        # Run eval
+        results = []
+        for i, example in enumerate(dataset):
+            with logger.span(f"process_example.{i}"):
+                prompt = example.get("prompt", example.get("question", ""))
+                expected = example.get("expected", example.get("answer", ""))
+                
+                try:
+                    response_data = provider.generate_with_metadata(
+                        prompt=prompt,
+                        temperature=model_config.get("temperature", 0.7),
+                        max_tokens=model_config.get("max_tokens", 512)
+                    )
+                    
+                    results.append({
+                        "prompt": prompt,
+                        "expected": expected,
+                        "generated": response_data["response"],
+                        "metadata": response_data["metadata"]
+                    })
+                    
+                    logger.info(
+                        f"Generated response",
+                        example_idx=i,
+                        tokens_used=response_data["metadata"]["tokens_total"],
+                        latency_ms=response_data["metadata"]["latency_ms"]
+                    )
+                    
+                    if config.get("output", {}).get("verbose", False):
+                        logger.debug(
+                            "Response preview",
+                            response=response_data['response'][:100]
+                        )
+                
+                except Exception as e:
+                    logger.error(f"Failed to generate response", example_idx=i, error=str(e))
+                    results.append({
+                        "prompt": prompt,
+                        "expected": expected,
+                        "generated": None,
+                        "error": str(e)
+                    })
+        
+        # Compute metrics
+        metric_names = config.get("metrics", [])
+        metrics = compute_metrics(results, metric_names)
+        
+        logger.info("Computed metrics", metrics=metrics)
+        
+        # Save results if output directory specified
+        output_config = config.get("output", {})
+        if results_dir := output_config.get("results_dir"):
+            save_results(results, metrics, config, results_dir)
+        
+        return {
+            "results": results,
+            "metrics": metrics,
+            "config": config
+        }
 
 
 def save_results(

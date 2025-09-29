@@ -52,6 +52,13 @@ Configured via `model.provider` in config.yaml:
 # Install shared package
 uv pip install -e shared
 
-# Set API keys
-export OPENROUTER_API_KEY="your-key-here"
+# Create .env file from template
+cp .env.example .env
+
+# Edit .env and set your tokens:
+#   OPENROUTER_API_KEY - Get from OpenRouter dashboard
+#   LOGFIRE_TOKEN - Get from Logfire project settings -> Write Tokens
+
+# If using direnv, add to .envrc:
+# dotenv .env
 ```

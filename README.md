@@ -66,8 +66,11 @@ Setup:
 # Install shared utilities
 uv pip install -e shared
 
-# Set API key for OpenRouter
-export OPENROUTER_API_KEY="your-key"
+# Create .env from template and set your tokens
+cp .env.example .env
+# Edit .env to set:
+#   - OPENROUTER_API_KEY (from OpenRouter dashboard)
+#   - LOGFIRE_TOKEN (from Logfire project settings -> Write Tokens)
 ```
 
 See `evals/README.md` for detailed documentation.

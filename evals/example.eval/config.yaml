@@ -1,5 +1,5 @@
 eval:
-  name: "example-baseline-eval"
+  name: "example.eval-default-config"
   dataset:
     path: "datasets/mock/mock_dataset.json"
 
