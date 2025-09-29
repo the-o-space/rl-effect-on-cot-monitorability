@@ -12,11 +12,17 @@ This project is structured as a monorepo containing multiple, self-contained RL 
 │   ├── example.rl/
 │   │   ├── __init__.py
 │   │   ├── train.py          # Main entrypoint for the experiment
+│   │   ├── setup.py          # Load models and datasets
 │   │   ├── config.yaml       # Default configuration
-│   │   ├── Dockerfile        # Container definition
 │   │   ├── requirements.txt  # Python dependencies
-│   │   └── test_train.py     # Local unit tests
 │   └── ...                   # Other experiments
+├── evals/
+│   ├── example.eval/
+│   │   ├── run.py            # Main eval entrypoint
+│   │   ├── config.yaml       # Eval configuration
+│   │   ├── metrics.py        # Scoring logic
+│   │   └── ...
+│   └── ...                   # Other evaluations
 ├── shared/
 │   └── ...                   # Shared utilities, installable as a package
 ├── Makefile                  # Helper commands for managing experiments
@@ -33,13 +39,38 @@ To create a new experiment, copy the `training/example.rl` directory and customi
 
 Each experiment can be tested locally by running it with a dedicated test configuration. This allows for fast, reproducible test runs using mock assets.
 
-The test runner script (`tests/run_test.py`) invokes the experiment's training script with the test configuration located at `tests/test_config.yaml`. The mock assets for this are in `models/mock/` and `datasets/mock/`.
+The test runner script (`tests/run_test.py`) invokes the experiment's training script with the test configuration located at `tests/config.yaml`. The mock assets for this are in `models/mock/` and `datasets/mock/`.
 
 To run the tests for a specific experiment:
 ```sh
 make test EXP=example.rl
 ```
 This simply provides a different configuration to the same training script, removing the need for special flags or logic within the experiment code itself.
+
+### Running Evaluations
+
+Evaluations are self-contained packages in the `evals/` directory. Each eval can test baseline models (via OpenRouter) or RL-trained models (via RunPod serverless endpoints).
+
+To run an evaluation:
+```sh
+make eval EVAL=example.eval
+```
+
+With a custom config:
+```sh
+make eval EVAL=example.eval CONFIG=path/to/config.yaml
+```
+
+Setup:
+```sh
+# Install shared utilities
+uv pip install -e shared
+
+# Set API key for OpenRouter
+export OPENROUTER_API_KEY="your-key"
+```
+
+See `evals/README.md` for detailed documentation.
 
 ### Building and Deploying
 

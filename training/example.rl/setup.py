@@ -1,1 +1,2 @@
 # This script sets up the fresh environment for the experiment, download the models into the RunPod VPS, potentially fetching them from the network volume or mounting them there.
+

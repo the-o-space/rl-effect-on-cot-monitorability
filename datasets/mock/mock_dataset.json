@@ -1,1 +1,14 @@
-{"description": "A tiny mock dataset for fast testing.", "data": [1, 2, 3]}
+[
+  {
+    "prompt": "What is 2 + 2?",
+    "expected": "4"
+  },
+  {
+    "prompt": "What is the capital of France?",
+    "expected": "Paris"
+  },
+  {
+    "prompt": "Complete the sequence: 1, 2, 3, ?",
+    "expected": "4"
+  }
+]

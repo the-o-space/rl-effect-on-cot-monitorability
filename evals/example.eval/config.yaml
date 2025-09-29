@@ -1,0 +1,18 @@
+eval:
+  name: "example-baseline-eval"
+  dataset:
+    path: "datasets/mock/mock_dataset.json"
+
+model:
+  provider: "openrouter"
+  model_id: "anthropic/claude-3.5-sonnet"
+  temperature: 0.7
+  max_tokens: 512
+
+metrics:
+  - accuracy
+  - response_length
+
+output:
+  results_dir: "results/example.eval/"
+  verbose: true

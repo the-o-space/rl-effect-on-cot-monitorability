@@ -12,7 +12,7 @@ def main(exp: str = typer.Argument(..., help="The experiment to test, e.g., 'exa
     project_root = Path(__file__).parent.parent
     exp_dir = project_root / "training" / exp
     train_script = exp_dir / "train.py"
-    config_path = project_root / "tests" / "test_config.yaml"
+    config_path = project_root / "tests" / "config.yaml"
 
     if not train_script.exists():
         logging.error(f"Error: train.py not found for experiment '{exp}' at {train_script}")

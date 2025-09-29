@@ -12,3 +12,8 @@ model:
 
 dataset:
   path: "datasets/production/cartpole_data.json"
+
+runpod:
+  name: "example.rl"
+  image:
+  template: https://console.runpod.io/hub/template/runpod-pytorch-2-1?id=runpod-torch-v21
