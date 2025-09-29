@@ -7,10 +7,11 @@ import os
 import logfire
 
 # Configure Logfire once on import
-# Note: LOGFIRE_TOKEN env var is the standard way to authenticate
+# Note: LOGFIRE_TOKEN and LOGFIRE_ENVIRONMENT are the standard env vars
 logfire.configure(
     token=os.getenv("LOGFIRE_TOKEN"),
     service_name="rl-cot-monitorability",
+    environment=os.getenv("LOGFIRE_ENVIRONMENT"),
 )
 
 # Export the configured logfire instance

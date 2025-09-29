@@ -71,6 +71,7 @@ cp .env.example .env
 # Edit .env to set:
 #   - OPENROUTER_API_KEY (from OpenRouter dashboard)
 #   - LOGFIRE_TOKEN (from Logfire project settings -> Write Tokens)
+#   - LOGFIRE_ENVIRONMENT (your name or environment name)
 ```
 
 See `evals/README.md` for detailed documentation.

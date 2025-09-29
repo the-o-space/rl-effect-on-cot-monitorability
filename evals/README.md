@@ -58,6 +58,7 @@ cp .env.example .env
 # Edit .env and set your tokens:
 #   OPENROUTER_API_KEY - Get from OpenRouter dashboard
 #   LOGFIRE_TOKEN - Get from Logfire project settings -> Write Tokens
+#   LOGFIRE_ENVIRONMENT - Your name or environment name (e.g., "theo-ryzhenkov")
 
 # If using direnv, add to .envrc:
 # dotenv .env

@@ -68,7 +68,7 @@ def run_eval(config: Dict[str, Any]) -> Dict[str, Any]:
                 expected = example.get("expected", example.get("answer", ""))
                 
                 try:
-                    response_data = provider.generate_with_metadata(
+                    response_data = provider.generate(
                         prompt=prompt,
                         temperature=model_config.get("temperature", 0.7),
                         max_tokens=model_config.get("max_tokens", 512)

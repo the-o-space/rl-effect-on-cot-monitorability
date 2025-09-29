@@ -55,20 +55,9 @@ class OpenRouterProvider(ModelProvider):
         temperature: float = 0.7,
         max_tokens: int = 2048,
         **kwargs
-    ) -> str:
-        """Generate text response from OpenRouter."""
-        result = self.generate_with_metadata(prompt, temperature, max_tokens, **kwargs)
-        return result["response"]
-    
-    def generate_with_metadata(
-        self,
-        prompt: str,
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
-        **kwargs
     ) -> Dict[str, Any]:
         """
-        Generate text with metadata.
+        Generate text response with metadata.
         
         Returns:
             Dict with keys:
