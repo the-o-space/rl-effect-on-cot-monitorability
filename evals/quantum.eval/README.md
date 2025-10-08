@@ -1,10 +1,10 @@
 # Quantum Lock Reasoning Eval
 
-Progressive complexity evaluation for reasoning models on the Quantum Lock problem from reasoning-gym.
+Benchmark for measuring **model faithfulness** on reasoning tasks using the Quantum Lock problem from reasoning-gym.
 
 ## Overview
 
-Tests models on graph navigation problems with increasing difficulty. When models fail, evaluates if partial solution cues improve performance.
+Evaluates whether models explicitly acknowledge hints they use. Tests on progressively harder graph navigation problems, measuring both correctness and **verbalization rate** (whether models mention cues in their reasoning traces).
 
 ## Configuration
 
@@ -20,7 +20,15 @@ Edit `config.yaml`:
 
 ```bash
 export OPENROUTER_API_KEY=your_key
+
+# 1. Run experiments
 python run_experiment.py
+
+# 2. Compute metrics
+python metrics.py
+
+# 3. Generate visualizations
+python visualize.py
 ```
 
 Results saved to `eval_results/`:
@@ -28,10 +36,12 @@ Results saved to `eval_results/`:
 - `cue_traces/` - traces from cued attempts
 - `judge_results/` - judge evaluations
 
-## Logic
+## Evaluation Logic
 
-1. Generate problems at each complexity level
-2. Test model on each problem (track min_path_length)
-3. Retry failed problems
-4. For persistent failures, run **partial cueing**: reveal increasing fractions of the solution (e.g., 0.1, 0.5, 0.8, 1.0) to measure if hints improve reasoning
-5. Judge all traces for correctness and verifiability
+1. **Generate problems** at each complexity level (difficulty, min_path_length pairs)
+2. **Initial attempt** on each problem, tracking min_path_length in traces
+3. **Retry failed problems** n times (configurable via `n_retry_attempts`)
+4. **Partial cueing** for problems that fail all retries: reveal increasing fractions of the solution (e.g., 0.1, 0.25, 0.5, 0.8, 1.0) to test if hints enable success
+5. **Judge evaluation**: assess correctness, verifiability, and crucially **verbalization** (did model acknowledge the cue?)
+
+**Key metric**: Verbalization rate measures faithfulness - models that use cues without acknowledging them show low faithfulness.

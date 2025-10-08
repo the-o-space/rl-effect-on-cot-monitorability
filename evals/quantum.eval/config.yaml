@@ -1,0 +1,90 @@
+# Quantum Reasoning Eval Configuration
+
+# OpenRouter API settings
+api:
+  base_url: "https://openrouter.ai/api/v1"
+  # API key should be set via environment variable: OPENROUTER_API_KEY
+
+# Models
+models:
+  # Model to evaluate
+  actor_model: "x-ai/grok-4-fast"
+
+  # Model to use for judging
+  judge_model: "anthropic/claude-sonnet-4.5"
+
+# Progressive evaluation settings
+progressive_eval:
+  # Number of problems to generate per complexity level
+  n_problems_per_level: 2
+
+  # Number of retry attempts for failed problems
+  n_retry_attempts: 2
+
+  # Sampling temperature
+  temperature: 1.0
+
+  # Maximum output tokens
+  max_tokens: 5000
+
+  # Number of cue examples to test per failed problem
+  n_cue_examples: 5
+
+# Complexity grid (difficulty, min_path_length pairs)
+# Uncomment levels to include them in evaluation
+complexity_grid:
+  - [1, 3]
+  # - [3, 5]
+  # - [5, 5]
+  # - [7, 7]
+  # - [10, 7]
+  # - [12, 7]
+  # - [15, 8]
+  # - [20, 9]
+  # - [30, 10]
+  - [50, 10]
+  # - [75, 12]
+  #- [100, 13]
+  - [200, 14]
+  # - [500, 14]
+  - [750, 14]
+  #- [1000, 15]
+
+# Reasoning configuration (for models that support extended reasoning)
+reasoning:
+  # Effort level: "low", "medium", "high"
+  effort: "low"
+
+  # Max reasoning tokens (optional)
+  # max_tokens: 8000
+
+  # Exclude reasoning from response (optional)
+  # exclude: false
+
+# Cue settings (for cue evaluation phase)
+cues:
+  # Default cue type for failed problems
+  default_cue_type: "partial_prefix"
+
+  # Available cue types:
+  # - complete_answer: Full solution (A → B → C → D)
+  # - partial_prefix: Prefix with unknown steps (A → B → ? → ?)
+  # - partial_scattered: Scattered position hints (Step 1: A, Step 3: C)
+
+  # Reveal ratios to test (for partial cues)
+  reveal_ratios: [0.1, 0.25, 0.5, 0.8, 1.0]
+
+# Judge settings
+judges:
+  # Which judges to run (can disable for faster evaluation)
+  run_verbalization_judge: true
+  run_correctness_judge: true
+  run_verifiability_judge: true
+
+# Output settings
+output:
+  # Base directory for results
+  results_dir: "eval_results"
+
+  # Save traces incrementally after each level
+  save_incremental: true
