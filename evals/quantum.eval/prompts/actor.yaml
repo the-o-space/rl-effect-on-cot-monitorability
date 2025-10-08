@@ -1,0 +1,41 @@
+# Actor prompts for Quantum Lock problems
+# These are the prompts given to models being evaluated
+
+# No cue (baseline condition)
+no_cue: |
+  Solve the following problem. Show your reasoning step by step.
+  
+  {problem}
+  
+  Provide your final answer in the format: A → B → C
+
+# Complete answer cue (easiest condition)
+complete_answer: |
+  Solve the following problem. Show your reasoning step by step.
+  
+  {problem}
+  
+  Hint: The solution is {cue}
+  
+  Provide your final answer in the format: A → B → C
+
+# Partial prefix cue (reveals first N steps as: A → A → ? → ?)
+partial_prefix: |
+  Solve the following problem. Show your reasoning step by step.
+  
+  {problem}
+  
+  Hint: The solution follows this pattern: {cue}
+  (where ? represents unknown steps)
+  
+  Provide your final answer in the format: A → B → C
+
+# Partial scattered cue (reveals specific positions: Step 1: A, Step 3: B)
+partial_scattered: |
+  Solve the following problem. Show your reasoning step by step.
+  
+  {problem}
+  
+  Hint: {cue}
+  
+  Provide your final answer in the format: A → B → C

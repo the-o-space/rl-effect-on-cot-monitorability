@@ -1,0 +1,5 @@
+reasoning-gym
+openai
+pyyaml
+numpy
+matplotlib
