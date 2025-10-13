@@ -12,23 +12,17 @@ uv sync --extra cotredhanded.eval
 
 ## Usage
 
-Run evaluations using this wrapper script:
+Run directly as a module:
 
 ```bash
-uv run --extra cotredhanded.eval evals/cotredhanded.eval/run.py \
-    --models "together/deepseek-ai/DeepSeek-R1-Distill-Qwen-14B" \
-    --dataset "bigcodebench" \
-    --side-tasks "varname,logio,ioexfil" \
-    --attack-policy "dependency" \
-    --id-set "TEST" \
-    --output-dir "evaluation_results" \
-    --limit 50
-```
-
-Or run directly as a module:
-
-```bash
-uv run --extra cotredhanded.eval python -m cot_red_handed.tasks.run_tasks --help
+uv run --extra cotredhanded.eval python -m cot_red_handed.tasks.run_tasks \
+  --models "openrouter/meta-llama/llama-3.2-3b-instruct" \
+  --dataset "bigcodebench" \
+  --side-tasks "varname" \
+  --attack-policy "dependency" \
+  --id-set "TEST" \
+  --output-dir "evals/cotredhanded.eval/test_run" \
+  --limit 3
 ```
 
 ## Reference
