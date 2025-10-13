@@ -10,10 +10,9 @@ import logfire
 # Note: LOGFIRE_TOKEN and LOGFIRE_ENVIRONMENT are the standard env vars
 logfire.configure(
     token=os.getenv("LOGFIRE_TOKEN"),
-    environment=os.getenv("LOGFIRE_ENVIRONMENT"),
+    environment=os.getenv("LOGFIRE_ENVIRONMENT", "dev"),
+    send_to_logfire=os.getenv("LOGFIRE_SEND_LOGS", "true"),
 )
 
 # Export the configured logfire instance
 logger = logfire
-
-__all__ = ["logger"]

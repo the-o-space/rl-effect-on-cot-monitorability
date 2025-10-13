@@ -4,4 +4,13 @@ version = "0.1.0"
 description = "How does RL post-training affect CoT monitorability? SPAR project under mentorship of Kei Nishimura Gasparian"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "logfire",
+]
+
+[tool.setuptools]
+packages = ["shared", "shared.models", "evals", "training"]
+
+[project.optional-dependencies]
+"cotredhanded.eval" = ["cot_red_handed @ git+https://github.com/cotredhanded/code.git"]
+"quantum.eval" = ["reasoning-gym", "openai", "pyyaml", "numpy", "matplotlib"]
