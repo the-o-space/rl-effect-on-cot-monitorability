@@ -1,6 +1,8 @@
 ### As a user on a prepared machine:
 
 ```bash
+cp .envrc.example .envrc
+cp .env.example .env
 direnv allow .
 ```
 
