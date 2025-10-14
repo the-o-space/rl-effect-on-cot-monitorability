@@ -5,10 +5,13 @@ api:
   base_url: "https://openrouter.ai/api/v1"
   # API key should be set via environment variable: OPENROUTER_API_KEY
 
+  # Async batch processing settings
+  max_concurrent_requests: 5  # Number of concurrent async requests
+
 # Models
 models:
   # Model to evaluate
-  actor_model: "x-ai/grok-4-fast"
+  actor_model: "openai/gpt-oss-120b"
 
   # Model to use for judging
   judge_model: "anthropic/claude-sonnet-4.5"
@@ -16,16 +19,16 @@ models:
 # Progressive evaluation settings
 progressive_eval:
   # Number of problems to generate per complexity level
-  n_problems_per_level: 2
+  n_problems_per_level: 5
 
   # Number of retry attempts for failed problems
-  n_retry_attempts: 2
+  n_retry_attempts: 5
 
   # Sampling temperature
   temperature: 1.0
 
   # Maximum output tokens
-  max_tokens: 5000
+  max_tokens: 8000
 
   # Number of cue examples to test per failed problem
   n_cue_examples: 5
@@ -43,12 +46,12 @@ complexity_grid:
   # - [20, 9]
   # - [30, 10]
   - [50, 10]
-  # - [75, 12]
+  - [75, 12]
   #- [100, 13]
   - [200, 14]
-  # - [500, 14]
+  - [500, 14]
   - [750, 14]
-  #- [1000, 15]
+  - [1000, 15]
 
 # Reasoning configuration (for models that support extended reasoning)
 reasoning:

@@ -8,6 +8,8 @@ from typing import Any, Optional, Dict, List
 from pathlib import Path
 import requests
 import time
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 class Config:
     """Load and manage configuration from YAML"""
@@ -216,7 +218,7 @@ class OpenRouterClient:
     def get_text_response(self, *args, **kwargs) -> Dict[str, Optional[str]]:
         """
         Get text response with reasoning (if available)
-        
+
         Returns:
             Dict with 'output' (main content) and 'reasoning' (reasoning trace if available)
         """
@@ -225,6 +227,86 @@ class OpenRouterClient:
             'output': result['output'],
             'reasoning': result['reasoning']
         }
+
+    async def complete_async(
+        self,
+        model: str,
+        messages: List[Dict[str, str]],
+        temperature: float = 1.0,
+        max_tokens: int = None,
+        reasoning_config: Optional[dict] = None,
+        **kwargs
+    ) -> dict:
+        """
+        Async version of complete - runs in thread pool to avoid blocking
+
+        Args:
+            Same as complete()
+
+        Returns:
+            Same as complete()
+        """
+        # Run the synchronous complete method in a thread pool
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,  # Use default executor
+            lambda: self.complete(model, messages, temperature, max_tokens, reasoning_config, **kwargs)
+        )
+
+    async def get_text_response_async(self, *args, **kwargs) -> Dict[str, Optional[str]]:
+        """
+        Async version of get_text_response
+
+        Returns:
+            Dict with 'output' (main content) and 'reasoning' (reasoning trace if available)
+        """
+        result = await self.complete_async(*args, **kwargs)
+        return {
+            'output': result['output'],
+            'reasoning': result['reasoning']
+        }
+
+    async def batch_get_text_responses(
+        self,
+        requests: List[Dict],
+        max_concurrent: int = 5
+    ) -> List[Dict[str, Optional[str]]]:
+        """
+        Process multiple requests in parallel with concurrency limit
+
+        Args:
+            requests: List of dicts, each containing args for get_text_response
+                      Format: {'model': ..., 'messages': ..., 'temperature': ..., etc}
+            max_concurrent: Maximum number of concurrent requests
+
+        Returns:
+            List of results in same order as requests
+        """
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def limited_request(req_dict):
+            async with semaphore:
+                return await self.get_text_response_async(**req_dict)
+
+        # Create all tasks
+        tasks = [limited_request(req) for req in requests]
+
+        # Wait for all to complete
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Convert exceptions to error dicts
+        processed_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                processed_results.append({
+                    'output': None,
+                    'reasoning': None,
+                    'error': str(result)
+                })
+            else:
+                processed_results.append(result)
+
+        return processed_results
 
 
 

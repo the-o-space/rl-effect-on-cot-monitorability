@@ -1,13 +1,17 @@
-"""Visualize evaluation results with per-model and comparative plots"""
+"""Visualize evaluation results focused on verbalization metrics"""
 
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
+from scipy.stats import pearsonr
 from metrics import load_traces, load_cue_traces, load_judge_results
 
+# Set up plotting style with better layout
 sns.set_style('whitegrid')
-plt.rcParams['figure.figsize'] = (10, 6)
+plt.rcParams['figure.figsize'] = (12, 8)
+plt.rcParams['figure.constrained_layout.use'] = True  # Fix title cutoff
+plt.rcParams['font.size'] = 10
 
 
 def get_unique_models(traces, cue_traces, judge):
@@ -19,379 +23,392 @@ def get_unique_models(traces, cue_traces, judge):
     return sorted(list(models))
 
 
-def plot_score_by_difficulty_single(traces, model_name, out):
-    """Plot score by difficulty for a single model"""
-    grouped = traces.groupby('difficulty')['score'].agg(['mean', 'std', 'count'])
-
-    fig, ax = plt.subplots()
-    ax.errorbar(grouped.index, grouped['mean'], yerr=grouped['std'],
-                marker='o', linewidth=2, markersize=8, capsize=5, capthick=2)
-    ax.set_xlabel('Difficulty', fontsize=12)
-    ax.set_ylabel('Score', fontsize=12)
-    ax.set_title(f'Score by Difficulty: {model_name}', fontsize=14, fontweight='bold')
-    ax.set_ylim(-0.05, 1.05)
-    ax.grid(alpha=0.3)
-
-    # Add count annotations
-    for diff, row in grouped.iterrows():
-        ax.text(diff, row['mean'] + 0.05, f"n={int(row['count'])}",
-                ha='center', fontsize=9, alpha=0.7)
-
-    plt.tight_layout()
-    safe_name = model_name.replace('/', '_')
-    plt.savefig(out / f'score_by_difficulty_{safe_name}.png', dpi=300)
-    plt.close()
-
-
-def plot_score_by_difficulty_comparison(traces, models, out):
-    """Comparative plot of score by difficulty across models"""
-    fig, ax = plt.subplots(figsize=(12, 6))
-
-    colors = plt.cm.Set2(np.linspace(0, 1, len(models)))
-
-    for i, model in enumerate(models):
-        model_traces = traces[traces['model'] == model]
-        grouped = model_traces.groupby('difficulty')['score'].agg(['mean', 'std'])
-
-        ax.errorbar(grouped.index, grouped['mean'], yerr=grouped['std'],
-                   marker='o', linewidth=2, markersize=8, capsize=5, capthick=2,
-                   label=model, color=colors[i])
-
-    ax.set_xlabel('Difficulty', fontsize=12)
-    ax.set_ylabel('Score', fontsize=12)
-    ax.set_title('Score by Difficulty: Model Comparison', fontsize=14, fontweight='bold')
-    ax.set_ylim(-0.05, 1.05)
-    ax.legend(loc='best', fontsize=10)
-    ax.grid(alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(out / 'score_by_difficulty_comparison.png', dpi=300)
-    plt.close()
-
-
-def plot_score_vs_reveal_single(cue, model_name, out):
-    """Plot score vs reveal ratio for a single model"""
-    valid = cue[cue['reveal_ratio'].notna() & cue['score'].notna()]
-    if len(valid) < 3:
-        return
-
-    fig, ax = plt.subplots()
-    ax.scatter(valid['reveal_ratio'], valid['score'], alpha=0.6, s=50)
-
-    if len(valid) >= 5:
-        z = np.polyfit(valid['reveal_ratio'], valid['score'], 1)
-        x_line = np.linspace(0, 1, 100)
-        ax.plot(x_line, np.poly1d(z)(x_line), 'r--', linewidth=2,
-                label=f'y={z[0]:.2f}x+{z[1]:.2f}')
-        ax.legend()
-
-    ax.set_xlabel('Reveal Ratio', fontsize=12)
-    ax.set_ylabel('Score', fontsize=12)
-    ax.set_title(f'Score vs Reveal Ratio: {model_name}', fontsize=14, fontweight='bold')
-    ax.set_xlim(-0.05, 1.05)
-    ax.set_ylim(-0.05, 1.05)
-    ax.grid(alpha=0.3)
-
-    plt.tight_layout()
-    safe_name = model_name.replace('/', '_')
-    plt.savefig(out / f'score_vs_reveal_{safe_name}.png', dpi=300)
-    plt.close()
-
-
-def plot_score_vs_reveal_comparison(cue, models, out):
-    """Comparative plot of score vs reveal ratio across models"""
-    fig, ax = plt.subplots(figsize=(12, 6))
-
-    colors = plt.cm.Set2(np.linspace(0, 1, len(models)))
-
-    for i, model in enumerate(models):
-        model_cue = cue[cue['model'] == model]
-        valid = model_cue[model_cue['reveal_ratio'].notna() & model_cue['score'].notna()]
-
-        if len(valid) < 3:
-            continue
-
-        ax.scatter(valid['reveal_ratio'], valid['score'], alpha=0.6, s=50,
-                  label=model, color=colors[i])
-
-        if len(valid) >= 5:
-            z = np.polyfit(valid['reveal_ratio'], valid['score'], 1)
-            x_line = np.linspace(0, 1, 100)
-            ax.plot(x_line, np.poly1d(z)(x_line), '--', linewidth=2, color=colors[i])
-
-    ax.set_xlabel('Reveal Ratio', fontsize=12)
-    ax.set_ylabel('Score', fontsize=12)
-    ax.set_title('Score vs Reveal Ratio: Model Comparison', fontsize=14, fontweight='bold')
-    ax.set_xlim(-0.05, 1.05)
-    ax.set_ylim(-0.05, 1.05)
-    ax.legend(loc='best', fontsize=10)
-    ax.grid(alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(out / 'score_vs_reveal_comparison.png', dpi=300)
-    plt.close()
-
-
-def plot_cue_effectiveness_single(traces, cue, model_name, out):
-    """Plot baseline vs cue effectiveness for a single model"""
-    if len(cue) == 0:
-        return
-
-    fig, ax = plt.subplots()
-    data = [traces['score'].values, cue['score'].values]
-    labels = [f'Baseline\n(n={len(traces)})', f'Cued\n(n={len(cue)})']
-
-    bp = ax.boxplot(data, labels=labels, widths=0.5, patch_artist=True, showmeans=True)
-    for patch in bp['boxes']:
-        patch.set_facecolor('lightblue')
-
-    ax.set_ylabel('Score', fontsize=12)
-    ax.set_title(f'Baseline vs Cued: {model_name}', fontsize=14, fontweight='bold')
-    ax.set_ylim(-0.1, 1.1)
-    ax.grid(alpha=0.3, axis='y')
-
-    plt.tight_layout()
-    safe_name = model_name.replace('/', '_')
-    plt.savefig(out / f'cue_effectiveness_{safe_name}.png', dpi=300)
-    plt.close()
-
-
-def plot_cue_effectiveness_comparison(traces, cue, models, out):
-    """Comparative plot of baseline vs cue across models"""
-    fig, ax = plt.subplots(figsize=(12, 6))
-
-    positions = []
-    data = []
-    labels = []
-    colors = []
-
-    pos = 1
+def plot_verbalization_rate_by_model(cue_traces, judge, models, out):
+    """Plot verbalization rate by model (main verbalization plot)"""
+    rates = []
+    model_names = []
+    n_values = []
+    
     for model in models:
-        model_traces = traces[traces['model'] == model]
-        model_cue = cue[cue['model'] == model]
-
+        model_cue = cue_traces[cue_traces['model'] == model] if 'model' in cue_traces.columns else cue_traces
+        model_judge = judge[judge['model'] == model] if 'model' in judge.columns else judge
+        
         if len(model_cue) == 0:
             continue
-
-        # Baseline
-        data.append(model_traces['score'].values)
-        positions.append(pos)
-        labels.append(f'{model}\nBaseline')
-        colors.append('lightblue')
-
-        # Cued
-        data.append(model_cue['score'].values)
-        positions.append(pos + 1)
-        labels.append(f'{model}\nCued')
-        colors.append('lightgreen')
-
-        pos += 3
-
-    bp = ax.boxplot(data, positions=positions, widths=0.7, patch_artist=True, showmeans=True)
-    for patch, color in zip(bp['boxes'], colors):
-        patch.set_facecolor(color)
-
-    ax.set_xticks(positions)
-    ax.set_xticklabels(labels, fontsize=9, rotation=45, ha='right')
-    ax.set_ylabel('Score', fontsize=12)
-    ax.set_title('Baseline vs Cued: Model Comparison', fontsize=14, fontweight='bold')
-    ax.set_ylim(-0.1, 1.1)
-    ax.grid(alpha=0.3, axis='y')
-
-    plt.tight_layout()
-    plt.savefig(out / 'cue_effectiveness_comparison.png', dpi=300)
-    plt.close()
-
-
-def plot_verbalization_vs_reveal_single(cue, judge, model_name, out):
-    """Plot verbalization vs reveal ratio for a single model"""
-    merged = cue.merge(judge[['problem_id', 'verbalization_score']], on='problem_id', how='left')
-    valid = merged[merged['reveal_ratio'].notna() & merged['verbalization_score'].notna()]
-
-    if len(valid) < 3:
+            
+        # Match cued traces with verbalization scores
+        merged = model_cue.merge(model_judge[['problem_id', 'verbalization_score']], 
+                               on='problem_id', how='inner')
+        verb_scores = merged['verbalization_score'].dropna()
+        
+        if len(verb_scores) > 0:
+            rate = (verb_scores >= 0.5).mean()
+            rates.append(rate)
+            model_names.append(model)
+            n_values.append(len(verb_scores))
+    
+    if not rates:
+        print("No verbalization data found")
         return
-
-    fig, ax = plt.subplots()
-    ax.scatter(valid['reveal_ratio'], valid['verbalization_score'], alpha=0.6, s=50, c='green')
-
-    if len(valid) >= 5:
-        z = np.polyfit(valid['reveal_ratio'], valid['verbalization_score'], 1)
-        x_line = np.linspace(0, 1, 100)
-        ax.plot(x_line, np.poly1d(z)(x_line), 'r--', linewidth=2,
-                label=f'y={z[0]:.2f}x+{z[1]:.2f}')
-        ax.legend()
-
-    ax.set_xlabel('Reveal Ratio', fontsize=12)
-    ax.set_ylabel('Verbalization Score', fontsize=12)
-    ax.set_title(f'Verbalization vs Reveal: {model_name}', fontsize=14, fontweight='bold')
-    ax.set_xlim(-0.05, 1.05)
-    ax.set_ylim(-0.05, 1.05)
-    ax.grid(alpha=0.3)
-
-    plt.tight_layout()
-    safe_name = model_name.replace('/', '_')
-    plt.savefig(out / f'verbalization_vs_reveal_{safe_name}.png', dpi=300)
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    colors = plt.cm.Set2(np.linspace(0, 1, len(rates)))
+    bars = ax.bar(range(len(rates)), rates, color=colors, alpha=0.7, edgecolor='black')
+    
+    # Add value labels on bars
+    for i, (bar, rate, n) in enumerate(zip(bars, rates, n_values)):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                f'{rate:.1%}\n(n={n})', ha='center', va='bottom', fontweight='bold')
+    
+    ax.set_xlabel('Model')
+    ax.set_ylabel('Verbalization Rate')
+    ax.set_title('Verbalization Rate by Model\n(Cued Traces Only)', fontweight='bold', pad=20)
+    ax.set_xticks(range(len(rates)))
+    ax.set_xticklabels(model_names, rotation=45, ha='right')
+    ax.set_ylim(0, 1.1)
+    ax.grid(axis='y', alpha=0.3)
+    
+    plt.savefig(out / 'verbalization_rate_by_model.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 
-def plot_judge_agreement_single(traces, judge, model_name, out):
-    """Plot judge agreement for a single model"""
-    merged = traces.merge(judge[['problem_id', 'reasoning_score']], on='problem_id', how='inner')
-    merged['score_bin'] = (merged['score'] >= 0.5).astype(int)
-    merged['judge_bin'] = (merged['reasoning_score'] >= 0.5).astype(int)
-    valid = merged[merged['reasoning_score'].notna()]
-
-    if len(valid) < 3:
-        return
-
-    import pandas as pd
-    cm = pd.crosstab(valid['score_bin'], valid['judge_bin'])
-
-    fig, ax = plt.subplots(figsize=(7, 6))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=True, ax=ax)
-    ax.set_ylabel('Actual Score (≥0.5)', fontsize=11)
-    ax.set_xlabel('Judge Reasoning (≥0.5)', fontsize=11)
-    ax.set_title(f'Judge Agreement: {model_name}', fontsize=14, fontweight='bold')
-
-    plt.tight_layout()
-    safe_name = model_name.replace('/', '_')
-    plt.savefig(out / f'judge_agreement_{safe_name}.png', dpi=300)
-    plt.close()
-
-
-def plot_quality_scores_single(judge, model_name, out):
-    """Plot quality scores for a single model"""
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-    for i, field in enumerate(['verifiability_score', 'completeness_score']):
-        if field not in judge.columns:
-            axes[i].text(0.5, 0.5, 'No Data', ha='center', va='center')
-            axes[i].set_title(field.replace('_score', '').title())
-            continue
-
-        scores = judge[field].dropna()
-        if len(scores) == 0:
-            axes[i].text(0.5, 0.5, 'No Data', ha='center', va='center')
-            axes[i].set_title(field.replace('_score', '').title())
-            continue
-
-        color = 'steelblue' if i == 0 else 'seagreen'
-        axes[i].hist(scores, bins=min(20, max(5, len(scores)//2)), color=color, alpha=0.7, edgecolor='black')
-        axes[i].axvline(scores.mean(), color='red', linestyle='--', linewidth=2,
-                       label=f'μ={scores.mean():.3f}')
-        axes[i].set_xlabel(field.replace('_', ' ').title(), fontsize=12)
-        axes[i].set_ylabel('Frequency', fontsize=12)
-        axes[i].set_title(field.replace('_score', '').title(), fontsize=13, fontweight='bold')
-        axes[i].legend()
-        axes[i].grid(alpha=0.3, axis='y')
-
-    fig.suptitle(f'Quality Scores: {model_name}', fontsize=15, fontweight='bold', y=1.02)
-    plt.tight_layout()
-    safe_name = model_name.replace('/', '_')
-    plt.savefig(out / f'quality_scores_{safe_name}.png', dpi=300)
-    plt.close()
-
-
-def plot_quality_scores_comparison(judge, models, out):
-    """Comparative plot of quality scores across models"""
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-    for i, field in enumerate(['verifiability_score', 'completeness_score']):
+def plot_judge_metrics_comparison(traces, judge, models, out):
+    """Plot judge agreement, completeness, and reasoning scores by model"""
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
+    
+    # Prepare data for all three metrics
+    metrics = ['reasoning_score', 'completeness_score']
+    metric_names = ['Reasoning Correctness', 'Completeness']
+    axes = [ax1, ax2]
+    
+    # Plot reasoning correctness and completeness
+    for ax, metric, name in zip(axes, metrics, metric_names):
         data = []
         labels = []
-
-        for model in models:
-            model_judge = judge[judge['model'] == model]
-            if field in model_judge.columns:
-                scores = model_judge[field].dropna()
-                if len(scores) > 0:
-                    data.append(scores.values)
-                    labels.append(f'{model}\n(n={len(scores)})')
-
-        if len(data) == 0:
-            axes[i].text(0.5, 0.5, 'No Data', ha='center', va='center')
-            axes[i].set_title(field.replace('_score', '').title())
+        colors = plt.cm.Set2(np.linspace(0, 1, len(models)))
+        
+        for i, model in enumerate(models):
+            model_traces = traces[traces['model'] == model] if 'model' in traces.columns else traces
+            model_judge = judge[judge['model'] == model] if 'model' in judge.columns else judge
+            
+            if len(model_judge) == 0 or metric not in model_judge.columns:
+                continue
+            
+            # Merge traces with judge scores
+            merged = model_traces.merge(model_judge[['problem_id', metric]], 
+                                      on='problem_id', how='inner')
+            scores = merged[metric].dropna()
+            
+            if len(scores) > 0:
+                data.append(scores.values)
+                labels.append(f'{model.split("_")[-1]}\n(n={len(scores)})')
+        
+        if data:
+            bp = ax.boxplot(data, tick_labels=labels, patch_artist=True, showmeans=True)
+            for patch, color in zip(bp['boxes'], colors[:len(data)]):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.7)
+            
+            ax.set_ylabel('Score')
+            ax.set_title(name, fontweight='bold')
+            ax.set_ylim(-0.05, 1.05)
+            ax.grid(axis='y', alpha=0.3)
+            ax.tick_params(axis='x', rotation=45)
+        else:
+            ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(name, fontweight='bold')
+    
+    # Plot judge agreement (correlation)
+    agreement_data = []
+    agreement_labels = []
+    for model in models:
+        model_traces = traces[traces['model'] == model] if 'model' in traces.columns else traces
+        model_judge = judge[judge['model'] == model] if 'model' in judge.columns else judge
+        
+        if len(model_judge) == 0 or 'reasoning_score' not in model_judge.columns:
             continue
-
-        color = 'steelblue' if i == 0 else 'seagreen'
-        bp = axes[i].boxplot(data, labels=labels, patch_artist=True, showmeans=True)
-        for patch in bp['boxes']:
-            patch.set_facecolor(color)
-            patch.set_alpha(0.7)
-
-        axes[i].set_ylabel('Score', fontsize=12)
-        axes[i].set_title(field.replace('_score', '').title(), fontsize=13, fontweight='bold')
-        axes[i].set_ylim(-0.05, 1.05)
-        axes[i].grid(alpha=0.3, axis='y')
-        axes[i].tick_params(axis='x', rotation=45)
-
-    fig.suptitle('Quality Scores: Model Comparison', fontsize=15, fontweight='bold', y=1.02)
-    plt.tight_layout()
-    plt.savefig(out / 'quality_scores_comparison.png', dpi=300)
+        
+        merged = model_traces.merge(model_judge[['problem_id', 'reasoning_score']], 
+                                  on='problem_id', how='inner')
+        valid = merged[merged['reasoning_score'].notna() & merged['score'].notna()]
+        
+        if len(valid) > 5:  # Need sufficient data for correlation
+            try:
+                corr, _ = pearsonr(valid['score'], valid['reasoning_score'])
+                agreement_data.append(corr)
+                agreement_labels.append(f'{model.split("_")[-1]}\n(r={corr:.3f})')
+            except:
+                continue
+    
+    if agreement_data:
+        colors = plt.cm.Set2(np.linspace(0, 1, len(agreement_data)))
+        bars = ax3.bar(range(len(agreement_data)), agreement_data, 
+                      color=colors, alpha=0.7, edgecolor='black')
+        
+        # Add correlation values on bars
+        for bar, corr in zip(bars, agreement_data):
+            height = bar.get_height()
+            ax3.text(bar.get_x() + bar.get_width()/2., height + 0.02 if height > 0 else height - 0.05,
+                    f'{corr:.3f}', ha='center', va='bottom' if height > 0 else 'top', fontweight='bold')
+        
+        ax3.set_ylabel('Correlation (r)')
+        ax3.set_title('Model-Judge Agreement', fontweight='bold')
+        ax3.set_xticks(range(len(agreement_data)))
+        ax3.set_xticklabels([label.split('\n')[0] for label in agreement_labels], rotation=45)
+        ax3.set_ylim(-1, 1)
+        ax3.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+        ax3.grid(axis='y', alpha=0.3)
+    else:
+        ax3.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax3.transAxes)
+        ax3.set_title('Model-Judge Agreement', fontweight='bold')
+    
+    plt.suptitle('Judge Evaluation Metrics by Model', fontsize=16, fontweight='bold')
+    plt.savefig(out / 'judge_metrics_comparison.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 
-def generate_all_plots(results_dir="eval_results"):
-    """Generate all plots: per-model and comparative"""
+def plot_score_uplift_by_reveal_ratio(traces, cue_traces, models, out):
+    """Plot score uplift (improvement) as a function of reveal ratio"""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    colors = plt.cm.Set2(np.linspace(0, 1, len(models)))
+    
+    for i, model in enumerate(models):
+        model_traces = traces[traces['model'] == model] if 'model' in traces.columns else traces
+        model_cue = cue_traces[cue_traces['model'] == model] if 'model' in cue_traces.columns else cue_traces
+        
+        if len(model_cue) == 0 or 'base_problem_id' not in model_cue.columns:
+            continue
+        
+        # Calculate uplift for each reveal ratio
+        reveal_ratios = sorted(model_cue['reveal_ratio'].unique())
+        mean_uplifts = []
+        std_uplifts = []
+        
+        for ratio in reveal_ratios:
+            cued_subset = model_cue[model_cue['reveal_ratio'] == ratio]
+            
+            # Match with original traces
+            if 'base_problem_id' in model_traces.columns:
+                matched = model_traces.merge(
+                    cued_subset[['base_problem_id', 'score']], 
+                    on='base_problem_id', 
+                    suffixes=('_orig', '_cued')
+                )
+            else:
+                # Fallback: extract base_problem_id from problem_id
+                traces_with_base = model_traces.copy()
+                traces_with_base['base_problem_id'] = traces_with_base['problem_id'].str.split('_').str[0]
+                matched = traces_with_base.merge(
+                    cued_subset[['base_problem_id', 'score']], 
+                    on='base_problem_id', 
+                    suffixes=('_orig', '_cued')
+                )
+            
+            if len(matched) > 0:
+                uplifts = matched['score_cued'] - matched['score_orig']
+                mean_uplifts.append(uplifts.mean())
+                std_uplifts.append(uplifts.std())
+        
+        if len(mean_uplifts) >= 2:
+            ax.errorbar(reveal_ratios, mean_uplifts, yerr=std_uplifts,
+                       marker='o', linewidth=2, markersize=8, capsize=5, 
+                       label=model, color=colors[i])
+    
+    ax.axhline(y=0, color='black', linestyle='-', alpha=0.3)  # Zero line
+    ax.set_xlabel('Reveal Ratio')
+    ax.set_ylabel('Score Uplift (Cued - Original)')
+    ax.set_title('Score Uplift vs Reveal Ratio', fontweight='bold', pad=20)
+    ax.set_xlim(-0.05, 1.05)
+    ax.legend(loc='best')
+    ax.grid(alpha=0.3)
+    
+    plt.savefig(out / 'score_uplift_by_reveal_ratio.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+def plot_verbalization_summary(cue_traces, judge, models, out):
+    """Create a summary plot showing verbalization patterns"""
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
+    colors = plt.cm.Set2(np.linspace(0, 1, len(models)))
+    
+    # 1. Verbalization rate by model
+    rates = []
+    model_names = []
+    for model in models:
+        model_cue = cue_traces[cue_traces['model'] == model] if 'model' in cue_traces.columns else cue_traces
+        model_judge = judge[judge['model'] == model] if 'model' in judge.columns else judge
+        
+        if len(model_cue) == 0:
+            continue
+            
+        merged = model_cue.merge(model_judge[['problem_id', 'verbalization_score']], 
+                               on='problem_id', how='inner')
+        verb_scores = merged['verbalization_score'].dropna()
+        
+        if len(verb_scores) > 0:
+            rate = (verb_scores >= 0.5).mean()
+            rates.append(rate)
+            model_names.append(model.split('_')[-1])  # Shorter names for display
+    
+    if rates:
+        bars = ax1.bar(range(len(rates)), rates, color=colors[:len(rates)], alpha=0.7)
+        for bar, rate in zip(bars, rates):
+            height = bar.get_height()
+            ax1.text(bar.get_x() + bar.get_width()/2., height + 0.01, f'{rate:.1%}', 
+                    ha='center', va='bottom', fontweight='bold')
+        ax1.set_title('Verbalization Rate by Model', fontweight='bold')
+        ax1.set_ylabel('Verbalization Rate')
+        ax1.set_xticks(range(len(rates)))
+        ax1.set_xticklabels(model_names, rotation=45)
+        ax1.set_ylim(0, 1.1)
+        ax1.grid(axis='y', alpha=0.3)
+    
+    # 2. Verbalization score distribution
+    for i, model in enumerate(models):
+        model_cue = cue_traces[cue_traces['model'] == model] if 'model' in cue_traces.columns else cue_traces
+        model_judge = judge[judge['model'] == model] if 'model' in judge.columns else judge
+        
+        if len(model_cue) == 0:
+            continue
+            
+        merged = model_cue.merge(model_judge[['problem_id', 'verbalization_score']], 
+                               on='problem_id', how='inner')
+        verb_scores = merged['verbalization_score'].dropna()
+        
+        if len(verb_scores) > 5:
+            ax2.hist(verb_scores, bins=10, alpha=0.6, label=model.split('_')[-1], 
+                    color=colors[i], edgecolor='black')
+    
+    ax2.set_title('Verbalization Score Distribution', fontweight='bold')
+    ax2.set_xlabel('Verbalization Score')
+    ax2.set_ylabel('Frequency')
+    ax2.legend()
+    ax2.grid(alpha=0.3)
+    
+    # 3. Verbalization vs Reveal Ratio (aggregated)
+    reveal_ratios = [0.1, 0.25, 0.5, 0.8, 1.0]
+    mean_verb_by_reveal = []
+    std_verb_by_reveal = []
+    
+    for ratio in reveal_ratios:
+        all_scores = []
+        for model in models:
+            model_cue = cue_traces[cue_traces['model'] == model] if 'model' in cue_traces.columns else cue_traces
+            model_judge = judge[judge['model'] == model] if 'model' in judge.columns else judge
+            
+            if len(model_cue) == 0:
+                continue
+            
+            merged = model_cue.merge(model_judge[['problem_id', 'verbalization_score']], 
+                                   on='problem_id', how='inner')
+            subset = merged[merged['reveal_ratio'] == ratio]
+            if len(subset) > 0:
+                all_scores.extend(subset['verbalization_score'].dropna().tolist())
+        
+        if all_scores:
+            mean_verb_by_reveal.append(np.mean(all_scores))
+            std_verb_by_reveal.append(np.std(all_scores))
+        else:
+            mean_verb_by_reveal.append(0)
+            std_verb_by_reveal.append(0)
+    
+    if any(mean_verb_by_reveal):
+        ax3.errorbar(reveal_ratios, mean_verb_by_reveal, yerr=std_verb_by_reveal,
+                    marker='o', linewidth=2, markersize=8, capsize=5, color='red')
+        ax3.set_title('Verbalization vs Reveal Ratio (All Models)', fontweight='bold')
+        ax3.set_xlabel('Reveal Ratio')
+        ax3.set_ylabel('Mean Verbalization Score')
+        ax3.grid(alpha=0.3)
+    
+    # 4. Verbalization rate by reveal ratio
+    rates_by_reveal = []
+    for ratio in reveal_ratios:
+        all_scores = []
+        for model in models:
+            model_cue = cue_traces[cue_traces['model'] == model] if 'model' in cue_traces.columns else cue_traces
+            model_judge = judge[judge['model'] == model] if 'model' in judge.columns else judge
+            
+            if len(model_cue) == 0:
+                continue
+            
+            merged = model_cue.merge(model_judge[['problem_id', 'verbalization_score']], 
+                                   on='problem_id', how='inner')
+            subset = merged[merged['reveal_ratio'] == ratio]
+            if len(subset) > 0:
+                all_scores.extend(subset['verbalization_score'].dropna().tolist())
+        
+        if all_scores:
+            rate = np.mean([s >= 0.5 for s in all_scores])
+            rates_by_reveal.append(rate)
+        else:
+            rates_by_reveal.append(0)
+    
+    if any(rates_by_reveal):
+        bars = ax4.bar(reveal_ratios, rates_by_reveal, color='green', alpha=0.7, width=0.08)
+        for bar, rate in zip(bars, rates_by_reveal):
+            height = bar.get_height()
+            ax4.text(bar.get_x() + bar.get_width()/2., height + 0.01, f'{rate:.1%}', 
+                    ha='center', va='bottom', fontweight='bold', fontsize=9)
+        ax4.set_title('Verbalization Rate by Reveal Ratio', fontweight='bold')
+        ax4.set_xlabel('Reveal Ratio')
+        ax4.set_ylabel('Verbalization Rate')
+        ax4.set_ylim(0, 1.1)
+        ax4.grid(axis='y', alpha=0.3)
+    
+    plt.suptitle('Verbalization Analysis Summary', fontsize=16, fontweight='bold')
+    plt.savefig(out / 'verbalization_summary.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+
+
+def generate_verbalization_plots(results_dir="eval_results"):
+    """Generate focused verbalization analysis plots"""
     print("Loading data...")
     traces = load_traces(results_dir)
-    cue = load_cue_traces(results_dir)
+    cue_traces = load_cue_traces(results_dir)
     judge = load_judge_results(results_dir)
 
     out = Path(results_dir) / "plots"
     out.mkdir(parents=True, exist_ok=True)
 
     # Get unique models
-    models = get_unique_models(traces, cue, judge)
+    models = get_unique_models(traces, cue_traces, judge)
     print(f"Found {len(models)} model(s): {', '.join(models)}")
 
     if len(models) == 0:
         print("No model information found. Skipping plots.")
         return
 
-    # Generate per-model plots
-    print("\nGenerating per-model plots...")
-    for model in models:
-        print(f"\n  Model: {model}")
-        model_traces = traces[traces['model'] == model] if 'model' in traces.columns else traces
-        model_cue = cue[cue['model'] == model] if 'model' in cue.columns else cue
-        model_judge = judge[judge['model'] == model] if 'model' in judge.columns else judge
+    # Check if we have judge data
+    if len(judge) == 0:
+        print("No judge data found. Skipping plots.")
+        return
 
-        plots = [
-            ("Score by difficulty", lambda: plot_score_by_difficulty_single(model_traces, model, out)),
-            ("Score vs reveal", lambda: plot_score_vs_reveal_single(model_cue, model, out)),
-            ("Cue effectiveness", lambda: plot_cue_effectiveness_single(model_traces, model_cue, model, out)),
-            ("Verbalization vs reveal", lambda: plot_verbalization_vs_reveal_single(model_cue, model_judge, model, out)),
-            ("Judge agreement", lambda: plot_judge_agreement_single(model_traces, model_judge, model, out)),
-            ("Quality scores", lambda: plot_quality_scores_single(model_judge, model, out)),
-        ]
+    print("\nGenerating verbalization-focused plots...")
+    
+    # Core verbalization and judge plots
+    plots = [
+        ("Verbalization rate by model", lambda: plot_verbalization_rate_by_model(cue_traces, judge, models, out)),
+        ("Judge metrics comparison", lambda: plot_judge_metrics_comparison(traces, judge, models, out)),
+        ("Score uplift by reveal ratio", lambda: plot_score_uplift_by_reveal_ratio(traces, cue_traces, models, out)),
+        ("Verbalization summary", lambda: plot_verbalization_summary(cue_traces, judge, models, out)),
+    ]
 
-        for name, func in plots:
-            try:
-                print(f"    - {name}")
-                func()
-            except Exception as e:
-                print(f"    - {name}: Skipped ({e})")
+    for name, func in plots:
+        try:
+            print(f"  - {name}")
+            func()
+        except Exception as e:
+            print(f"  - {name}: Skipped ({e})")
+            import traceback
+            print(f"    Error details: {traceback.format_exc()}")
 
-    # Generate comparative plots if multiple models
-    if len(models) > 1:
-        print(f"\nGenerating comparative plots ({len(models)} models)...")
-
-        comp_plots = [
-            ("Score by difficulty", lambda: plot_score_by_difficulty_comparison(traces, models, out)),
-            ("Score vs reveal", lambda: plot_score_vs_reveal_comparison(cue, models, out)),
-            ("Cue effectiveness", lambda: plot_cue_effectiveness_comparison(traces, cue, models, out)),
-            ("Quality scores", lambda: plot_quality_scores_comparison(judge, models, out)),
-        ]
-
-        for name, func in comp_plots:
-            try:
-                print(f"  - {name}")
-                func()
-            except Exception as e:
-                print(f"  - {name}: Skipped ({e})")
-
-    print(f"\nPlots saved to {out}/")
+    print(f"\nVerbalization plots saved to {out}/")
+    print("\nGenerated plots:")
+    for plot_file in sorted(out.glob("*.png")):
+        print(f"  - {plot_file.name}")
 
 
 if __name__ == "__main__":
@@ -400,4 +417,4 @@ if __name__ == "__main__":
     parser.add_argument('--results-dir', default='eval_results')
     args = parser.parse_args()
 
-    generate_all_plots(args.results_dir)
+    generate_verbalization_plots(args.results_dir)

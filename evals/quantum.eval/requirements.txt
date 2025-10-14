@@ -3,3 +3,4 @@ openai
 pyyaml
 numpy
 matplotlib
+nest_asyncio

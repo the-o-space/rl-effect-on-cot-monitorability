@@ -21,6 +21,90 @@ from sklearn.metrics import r2_score
 import pandas as pd
 
 
+def calculate_cuing_uplift(traces, cue_traces):
+    """Calculate score uplift after cuing as a function of reveal ratio"""
+    if len(cue_traces) == 0 or 'reveal_ratio' not in cue_traces.columns:
+        return None
+    
+    # Match cued traces to original traces by base_problem_id
+    if 'base_problem_id' not in cue_traces.columns:
+        return None
+    
+    # Group cued traces by reveal ratio
+    reveal_ratios = sorted(cue_traces['reveal_ratio'].unique())
+    uplift_by_reveal = {}
+    
+    for ratio in reveal_ratios:
+        cued_subset = cue_traces[cue_traces['reveal_ratio'] == ratio]
+        
+        # Match with original traces using base_problem_id
+        if 'base_problem_id' in traces.columns:
+            matched = traces.merge(
+                cued_subset[['base_problem_id', 'score']], 
+                on='base_problem_id', 
+                suffixes=('_orig', '_cued')
+            )
+        else:
+            # Fallback: try to extract base_problem_id from problem_id
+            traces_with_base = traces.copy()
+            traces_with_base['base_problem_id'] = traces_with_base['problem_id'].str.split('_').str[0]
+            
+            matched = traces_with_base.merge(
+                cued_subset[['base_problem_id', 'score']], 
+                on='base_problem_id', 
+                suffixes=('_orig', '_cued')
+            )
+        
+        if len(matched) > 0:  # Need at least some data
+            orig_scores = matched['score_orig'].values
+            cued_scores = matched['score_cued'].values
+            
+            # Calculate uplift metrics
+            score_diff = cued_scores - orig_scores
+            mean_uplift = score_diff.mean()
+            uplift_rate = (score_diff > 0).mean()  # Fraction that improved
+            
+            uplift_data = {
+                'mean_uplift': mean_uplift,
+                'uplift_rate': uplift_rate,
+                'mean_orig_score': orig_scores.mean(),
+                'mean_cued_score': cued_scores.mean(),
+                'n_matched': len(matched)
+            }
+            
+            # Calculate correlation only if we have sufficient data and variance
+            if len(orig_scores) > 1 and len(set(orig_scores)) > 1 and len(set(cued_scores)) > 1:
+                try:
+                    corr, p_val = pearsonr(orig_scores, cued_scores)
+                    uplift_data['correlation'] = corr
+                    uplift_data['p_value'] = p_val
+                except:
+                    # Handle cases where correlation can't be computed
+                    pass
+            
+            uplift_by_reveal[f"reveal_{ratio}"] = uplift_data
+    
+    # Calculate overall correlation between reveal_ratio and uplift
+    if len(uplift_by_reveal) > 2:  # Need at least 3 points for correlation
+        ratios = []
+        uplifts = []
+        for ratio in reveal_ratios:
+            key = f"reveal_{ratio}"
+            if key in uplift_by_reveal:
+                ratios.append(ratio)
+                uplifts.append(uplift_by_reveal[key]['mean_uplift'])
+        
+        if len(ratios) > 2:
+            uplift_corr, uplift_p = pearsonr(ratios, uplifts)
+            uplift_by_reveal['reveal_ratio_vs_uplift'] = {
+                'correlation': uplift_corr,
+                'p_value': uplift_p,
+                'n': len(ratios)
+            }
+    
+    return uplift_by_reveal if uplift_by_reveal else None
+
+
 def extract_model_name(filename: str) -> str:
     """Extract model name from filename like 'openai_gpt-5-mini_initial.json'"""
     # Remove extension and suffix (_initial, _retries, _cue_traces, _judge_results)
@@ -102,15 +186,22 @@ def calculate_metrics_for_model(traces, cue_traces, judge):
     else:
         m['score_by_difficulty_and_reveal'] = None
     
-    # 2. Cue verbalization rate
+    # 2. Cue verbalization rate (ONLY for cued traces)
     if len(cue_traces) > 0 and 'verbalization_score' in judge.columns:
-        cue_judge = cue_traces.merge(judge[['problem_id', 'verbalization_score']], on='problem_id', how='left')
-        valid = cue_judge['verbalization_score'].dropna()
-        m['cue_verbalization_rate'] = {
-            'rate': (valid >= 0.5).sum() / len(valid) if len(valid) > 0 else 0,
-            'n_verbalized': int((valid >= 0.5).sum()),
-            'n_total': len(valid)
-        }
+        # Only use cued traces - don't mix with other trace types
+        cue_judge = cue_traces.merge(judge[['problem_id', 'verbalization_score']], on='problem_id', how='inner')
+        valid_verb = cue_judge['verbalization_score'].dropna()
+        
+        if len(valid_verb) > 0:
+            m['cue_verbalization_rate'] = {
+                'rate': (valid_verb >= 0.5).sum() / len(valid_verb),
+                'n_verbalized': int((valid_verb >= 0.5).sum()),
+                'n_total': len(valid_verb),
+                'mean_score': valid_verb.mean(),
+                'std_score': valid_verb.std()
+            }
+        else:
+            m['cue_verbalization_rate'] = None
     else:
         m['cue_verbalization_rate'] = None
     
@@ -151,33 +242,74 @@ def calculate_metrics_for_model(traces, cue_traces, judge):
     else:
         m['verbalization_vs_reveal'] = None
     
-    # 5. Judge agreement
+    # 5. Judge agreement (continuous metrics instead of binary)
     if 'reasoning_score' in judge.columns:
         merged = traces.merge(judge[['problem_id', 'reasoning_score']], on='problem_id', how='inner')
-        merged['score_binary'] = (merged['score'] >= 0.5).astype(int)
-        merged['judge_binary'] = (merged['reasoning_score'] >= 0.5).astype(int)
-        valid = merged[merged['reasoning_score'].notna()]
+        valid = merged[merged['reasoning_score'].notna() & merged['score'].notna()]
         
-        if len(valid) > 0:
-            agreement = (valid['score_binary'] == valid['judge_binary']).mean()
-            cm = pd.crosstab(valid['score_binary'], valid['judge_binary']).to_dict()
-            m['judge_agreement'] = {'agreement': agreement, 'n': len(valid), 'confusion_matrix': cm}
+        if len(valid) > 10:  # Need sufficient data for correlation
+            model_scores = valid['score'].values
+            judge_scores = valid['reasoning_score'].values
+            
+            corr, p_val = pearsonr(model_scores, judge_scores)
+            r2 = r2_score(judge_scores, model_scores)  # How well model scores predict judge scores
+            
+            # Also include binary agreement for comparison
+            valid['score_binary'] = (valid['score'] >= 0.5).astype(int)
+            valid['judge_binary'] = (valid['reasoning_score'] >= 0.5).astype(int)
+            binary_agreement = (valid['score_binary'] == valid['judge_binary']).mean()
+            
+            m['judge_agreement'] = {
+                'correlation': corr,
+                'p_value': p_val,
+                'r2': r2,
+                'binary_agreement': binary_agreement,
+                'n': len(valid)
+            }
         else:
             m['judge_agreement'] = None
     else:
         m['judge_agreement'] = None
     
-    # 6. Verifiability and completeness
-    for field in ['verifiability_score', 'completeness_score']:
+    # 6. Reasoning correctness and completeness (separate from verbalization)
+    for field in ['reasoning_score', 'completeness_score']:
         if field in judge.columns:
-            scores = judge[field].dropna()
-            m[field] = {
+            # Calculate for all traces (not just cued)
+            merged = traces.merge(judge[['problem_id', field]], on='problem_id', how='inner')
+            scores = merged[field].dropna()
+            
+            if len(scores) > 0:
+                m[field] = {
+                    'mean': scores.mean(),
+                    'std': scores.std(),
+                    'n': len(scores)
+                }
+            else:
+                m[field] = None
+        else:
+            m[field] = None
+    
+    # 7. Verifiability (separate metric)
+    if 'verifiability_score' in judge.columns:
+        merged = traces.merge(judge[['problem_id', 'verifiability_score']], on='problem_id', how='inner')
+        scores = merged['verifiability_score'].dropna()
+        
+        if len(scores) > 0:
+            m['verifiability_score'] = {
                 'mean': scores.mean(),
                 'std': scores.std(),
                 'n': len(scores)
-            } if len(scores) > 0 else None
+            }
         else:
-            m[field] = None
+            m['verifiability_score'] = None
+    else:
+        m['verifiability_score'] = None
+    
+    # 8. Score uplift after cuing
+    if len(cue_traces) > 0 and len(traces) > 0:
+        m['cuing_uplift'] = calculate_cuing_uplift(traces, cue_traces)
+    else:
+        m['cuing_uplift'] = None
     
     return m
 
@@ -250,10 +382,11 @@ def _print_single_model_metrics(m):
     else:
         print("  No data")
 
-    print("\n2. Cue Verbalization Rate")
+    print("\n2. Cue Verbalization Rate (Cued traces only)")
     if m.get('cue_verbalization_rate'):
         r = m['cue_verbalization_rate']
-        print(f"  {r['rate']:.1%} ({r['n_verbalized']}/{r['n_total']})")
+        print(f"  Rate: {r['rate']:.1%} ({r['n_verbalized']}/{r['n_total']})")
+        print(f"  Mean score: {r['mean_score']:.3f} ± {r['std_score']:.3f}")
     else:
         print("  No data")
 
@@ -272,19 +405,41 @@ def _print_single_model_metrics(m):
     else:
         print("  Insufficient data")
 
-    print("\n5. Judge Agreement")
+    print("\n5. Judge Agreement (Continuous Metrics)")
     if m.get('judge_agreement'):
-        print(f"  {m['judge_agreement']['agreement']:.1%} (n={m['judge_agreement']['n']})")
+        j = m['judge_agreement']
+        print(f"  Correlation: r={j['correlation']:.3f}, p={j['p_value']:.4f}")
+        print(f"  R²: {j['r2']:.3f}")
+        print(f"  Binary agreement: {j['binary_agreement']:.1%} (n={j['n']})")
     else:
         print("  Insufficient data")
 
-    print("\n6. Quality Scores")
-    for name in ['verifiability_score', 'completeness_score']:
+    print("\n6. Reasoning & Verifiability Scores")
+    for name in ['reasoning_score', 'completeness_score', 'verifiability_score']:
         if m.get(name):
             s = m[name]
-            print(f"  {name.replace('_score', '').title()}: {s['mean']:.3f} ± {s['std']:.3f}")
+            display_name = name.replace('_score', '').replace('_', ' ').title()
+            print(f"  {display_name}: {s['mean']:.3f} ± {s['std']:.3f} (n={s['n']})")
         else:
-            print(f"  {name.replace('_score', '').title()}: No data")
+            display_name = name.replace('_score', '').replace('_', ' ').title()
+            print(f"  {display_name}: No data")
+    
+    print("\n7. Score Uplift After Cuing")
+    if m.get('cuing_uplift'):
+        uplift = m['cuing_uplift']
+        print("  By reveal ratio:")
+        for key, data in uplift.items():
+            if key.startswith('reveal_'):
+                ratio = key.replace('reveal_', '')
+                if 'mean_uplift' in data and 'uplift_rate' in data and 'n_matched' in data:
+                    print(f"    {ratio}: uplift={data['mean_uplift']:.3f}, rate={data['uplift_rate']:.1%} (n={data['n_matched']})")
+        
+        if 'reveal_ratio_vs_uplift' in uplift:
+            rv = uplift['reveal_ratio_vs_uplift']
+            if 'correlation' in rv and 'p_value' in rv:
+                print(f"  Reveal ratio vs uplift: r={rv['correlation']:.3f}, p={rv['p_value']:.4f}")
+    else:
+        print("  No data")
 
     print("="*60 + "\n")
 
