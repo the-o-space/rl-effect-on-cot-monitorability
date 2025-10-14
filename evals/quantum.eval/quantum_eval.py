@@ -2,6 +2,7 @@
 
 import json
 import hashlib
+import asyncio
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass, asdict
@@ -249,7 +250,241 @@ class QuantumReasoningEval:
         )
 
         return trace
-    
+
+    def _run_async_batch(self, requests: List[Dict], max_concurrent: int):
+        """
+        Helper to run async batch requests, handling event loop properly
+        Works in both CLI and Jupyter environments
+        """
+        try:
+            # Check if there's already a running event loop
+            loop = asyncio.get_running_loop()
+            # We're in a running loop (e.g., Jupyter) - use nest_asyncio
+            try:
+                import nest_asyncio
+                nest_asyncio.apply()
+                return asyncio.run(
+                    self.client.batch_get_text_responses(requests, max_concurrent=max_concurrent)
+                )
+            except ImportError:
+                raise RuntimeError(
+                    "Running in Jupyter requires nest_asyncio. Install with: pip install nest_asyncio"
+                )
+        except RuntimeError:
+            # No running loop (CLI case) - safe to use asyncio.run()
+            return asyncio.run(
+                self.client.batch_get_text_responses(requests, max_concurrent=max_concurrent)
+            )
+
+    def test_problems_batch(
+        self,
+        problems: List[Dict],
+        model: str,
+        attempt_number: int = 1,
+        cue_type: Optional[str] = None,
+        reveal_ratios: Optional[List[float]] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        reasoning_config: Optional[Dict] = None,
+        max_concurrent: Optional[int] = None
+    ) -> List[ReasoningTrace]:
+        """
+        Test model on multiple problems in parallel using async batch requests
+
+        Args:
+            problems: List of problem dicts
+            model: Model name
+            attempt_number: Attempt number for all problems
+            cue_type: Cue type (if None, no cue)
+            reveal_ratios: List of reveal ratios (only used if cue_type is not None)
+                          If provided, creates len(problems) * len(reveal_ratios) requests
+            temperature: Sampling temperature
+            max_tokens: Max output tokens
+            reasoning_config: Reasoning configuration
+            max_concurrent: Max concurrent requests (from config if None)
+
+        Returns:
+            List of ReasoningTrace objects
+        """
+        if max_concurrent is None:
+            max_concurrent = self.config.get('api.max_concurrent_requests', 5)
+
+        # Use config defaults if not provided
+        if temperature is None:
+            temperature = self.config.get('progressive_eval.temperature', 1.0)
+        if max_tokens is None:
+            max_tokens = self.config.get('progressive_eval.max_tokens', 4000)
+        if reasoning_config is None:
+            # Build reasoning config from config file
+            effort = self.config.get('reasoning.effort')
+            reasoning_max_tokens = self.config.get('reasoning.max_tokens')
+            exclude = self.config.get('reasoning.exclude')
+
+            if effort or reasoning_max_tokens or exclude:
+                reasoning_config = {}
+                if effort:
+                    reasoning_config['effort'] = effort
+                if reasoning_max_tokens:
+                    reasoning_config['max_tokens'] = reasoning_max_tokens
+                if exclude:
+                    reasoning_config['exclude'] = exclude
+
+        # Build list of requests
+        requests = []
+        request_metadata = []  # Store metadata for each request
+
+        for problem in problems:
+            # If cue_type is provided and reveal_ratios, create multiple requests per problem
+            if cue_type and reveal_ratios:
+                for reveal_ratio in reveal_ratios:
+                    # Generate cue
+                    solution_path = problem['metadata']['solution_path']
+                    cue_str, _ = self.cue_generator.generate_cue(
+                        solution_path=solution_path,
+                        cue_type=cue_type,
+                        reveal_ratio=reveal_ratio
+                    )
+                    prompt_type = cue_type
+
+                    # Get prompt
+                    prompt = self.prompt_loader.get_actor_prompt(
+                        prompt_type,
+                        problem=problem['question'],
+                        cue=cue_str
+                    )
+
+                    # Add to batch
+                    requests.append({
+                        'model': model,
+                        'messages': [{'role': 'user', 'content': prompt}],
+                        'temperature': temperature,
+                        'max_tokens': max_tokens,
+                        'reasoning_config': reasoning_config
+                    })
+
+                    request_metadata.append({
+                        'problem': problem,
+                        'cue_type': cue_type,
+                        'reveal_ratio': reveal_ratio,
+                        'cue_str': cue_str
+                    })
+            else:
+                # Single request per problem
+                cue_str = None
+                if cue_type:
+                    solution_path = problem['metadata']['solution_path']
+                    # Use first reveal_ratio or default
+                    reveal_ratio = reveal_ratios[0] if reveal_ratios else 0.5
+                    cue_str, _ = self.cue_generator.generate_cue(
+                        solution_path=solution_path,
+                        cue_type=cue_type,
+                        reveal_ratio=reveal_ratio
+                    )
+                    prompt_type = cue_type
+                else:
+                    prompt_type = 'no_cue'
+                    reveal_ratio = None
+
+                # Get prompt
+                prompt = self.prompt_loader.get_actor_prompt(
+                    prompt_type,
+                    problem=problem['question'],
+                    cue=cue_str if cue_str else ''
+                )
+
+                # Add to batch
+                requests.append({
+                    'model': model,
+                    'messages': [{'role': 'user', 'content': prompt}],
+                    'temperature': temperature,
+                    'max_tokens': max_tokens,
+                    'reasoning_config': reasoning_config
+                })
+
+                request_metadata.append({
+                    'problem': problem,
+                    'cue_type': cue_type,
+                    'reveal_ratio': reveal_ratio,
+                    'cue_str': cue_str
+                })
+
+        # Execute batch requests
+        # Use a helper to handle event loop properly
+        results = self._run_async_batch(requests, max_concurrent)
+
+        # Process results into traces
+        traces = []
+        for i, (result, metadata) in enumerate(zip(results, request_metadata)):
+            problem = metadata['problem']
+            cue_type_used = metadata['cue_type']
+            reveal_ratio = metadata['reveal_ratio']
+            cue_str = metadata['cue_str']
+
+            # Handle errors
+            if 'error' in result:
+                print(f"  Error in batch request {i}: {result['error']}")
+                output = None
+                reasoning = None
+            else:
+                output = result['output']
+                reasoning = result['reasoning']
+
+            # Check if we have output
+            has_output = (output is not None and len(output.strip()) > 0)
+
+            # Extract answer
+            answer = None
+            answer_extracted = False
+            if has_output:
+                answer = extract_answer_from_response(output)
+                answer_extracted = (answer is not None)
+
+            # Score
+            score = 0.0
+            if answer_extracted:
+                dataset = reasoning_gym.create_dataset('quantum_lock', size=1)
+                score = dataset.score_answer(answer, problem)
+
+            # Generate unique problem hash from task description
+            task_description = problem['question']
+            content_hash = hashlib.md5(task_description.encode()).hexdigest()[:8]
+            base_problem_id = content_hash
+
+            # Create structured problem_id
+            if cue_type_used:
+                # Cued attempt: hash_cued_attemptnum_reveal{ratio}
+                problem_id = f"{content_hash}_cued_{attempt_number}_reveal{reveal_ratio}"
+            elif attempt_number == 1:
+                # Initial attempt: hash_initial_1
+                problem_id = f"{content_hash}_initial_{attempt_number}"
+            else:
+                # Retry attempt: hash_retry_N
+                problem_id = f"{content_hash}_retry_{attempt_number}"
+
+            trace = ReasoningTrace(
+                problem_id=problem_id,
+                base_problem_id=base_problem_id,
+                difficulty=problem['metadata']['difficulty']['difficulty'],
+                min_path_length=problem.get('min_path_length', 0),
+                actual_path_length=len(problem['metadata']['solution_path']),
+                task_description=task_description,
+                expected_answer=' → '.join(problem['metadata']['solution_path']),
+                output=output,
+                reasoning=reasoning,
+                predicted_answer=answer,
+                score=score,
+                attempt_number=attempt_number,
+                cue_type=cue_type_used,
+                reveal_ratio=reveal_ratio,
+                has_output=has_output,
+                answer_extracted=answer_extracted,
+                cue=cue_str
+            )
+
+            traces.append(trace)
+
+        return traces
+
     def run_progressive_eval(
         self,
         model: Optional[str] = None,
@@ -328,7 +563,7 @@ class QuantumReasoningEval:
         # Track all attempts per problem to determine if ALL failed
         problem_attempts = {}  # base_problem_id -> list of (problem, trace) tuples
 
-        # Step 1-3: Test all complexity levels
+        # Step 1-3: Test all complexity levels (using batch async)
         for level in complexity_grid:
             print(f"\n[{level}] Generating {n_problems_per_level} problems...")
 
@@ -337,21 +572,26 @@ class QuantumReasoningEval:
                 n_problems=n_problems_per_level
             )
 
-            print(f"[{level}] Testing {len(problems)} problems (attempt 1)...")
+            print(f"[{level}] Testing {len(problems)} problems in batch (attempt 1)...")
 
-            for problem in problems:
-                trace = self.test_problem(
-                    problem=problem,
-                    model=model,
-                    attempt_number=1,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    reasoning_config=reasoning_config
-                )
+            # Use batch processing
+            traces = self.test_problems_batch(
+                problems=problems,
+                model=model,
+                attempt_number=1,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                reasoning_config=reasoning_config
+            )
 
+            # Process traces
+            for trace in traces:
                 all_traces.append(trace)
 
                 # Track attempts per problem using base_problem_id
+                # Find corresponding problem
+                problem = next(p for p in problems if hashlib.md5(p['question'].encode()).hexdigest()[:8] == trace.base_problem_id)
+
                 if trace.base_problem_id not in problem_attempts:
                     problem_attempts[trace.base_problem_id] = []
                 problem_attempts[trace.base_problem_id].append((problem, trace))
@@ -384,26 +624,35 @@ class QuantumReasoningEval:
         print(f"Failed problems (first attempt): {len(initially_failed_problems)}")
         print(f"{'='*60}")
 
-        # Step 4: Retry failed problems
+        # Step 4: Retry failed problems (using batch async)
         if initially_failed_problems:
-            print(f"\nRetrying {len(initially_failed_problems)} failed problems...")
+            print(f"\nRetrying {len(initially_failed_problems)} failed problems in batches...")
 
             retry_traces = []
 
-            for problem, initial_trace in initially_failed_problems:
-                for retry_num in range(2, n_retry_attempts + 2):  # attempts 2, 3, ...
-                    print(f"  Retry {retry_num-1}: {initial_trace.problem_id}")
+            # Process retries in batches by retry number
+            for retry_num in range(2, n_retry_attempts + 2):  # attempts 2, 3, ...
+                print(f"  Batch retry {retry_num-1}: {len(initially_failed_problems)} problems...")
 
-                    trace = self.test_problem(
-                        problem=problem,
-                        model=model,
-                        attempt_number=retry_num,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        reasoning_config=reasoning_config
-                    )
+                # Get all problems for this retry
+                retry_problems = [problem for problem, _ in initially_failed_problems]
 
+                # Batch process
+                batch_traces = self.test_problems_batch(
+                    problems=retry_problems,
+                    model=model,
+                    attempt_number=retry_num,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning_config=reasoning_config
+                )
+
+                # Track traces
+                for trace in batch_traces:
                     retry_traces.append(trace)
+
+                    # Find corresponding problem
+                    problem = next(p for p in retry_problems if hashlib.md5(p['question'].encode()).hexdigest()[:8] == trace.base_problem_id)
 
                     # Track this attempt using base_problem_id
                     problem_attempts[trace.base_problem_id].append((problem, trace))
@@ -461,7 +710,7 @@ class QuantumReasoningEval:
         max_tokens: int = 4000,
         reasoning_config: Optional[Dict] = None
     ) -> List[ReasoningTrace]:
-        """Run cue evaluation with different reveal ratios"""
+        """Run cue evaluation with different reveal ratios (using batch async)"""
 
         # Get cue settings from config
         reveal_ratios_config = self.config.get('cues.reveal_ratios')
@@ -470,34 +719,32 @@ class QuantumReasoningEval:
             reveal_ratios = reveal_ratios_config[:n_cue_examples]
         else:
             # Default: evenly spaced from 0.1 to 1.0
-            reveal_ratios = np.linspace(0.1, 1.0, n_cue_examples)
+            reveal_ratios = np.linspace(0.1, 1.0, n_cue_examples).tolist()
 
         cue_type = self.config.get('cues.default_cue_type', 'partial_prefix')
-        
-        cue_traces = []
-        
-        for problem, failed_trace in failed_problems:
-            print(f"  Cue eval: {failed_trace.problem_id}")
-            
-            for reveal_ratio in reveal_ratios:
-                trace = self.test_problem(
-                    problem=problem,
-                    model=model,
-                    attempt_number=0,  # Special marker for cue attempts
-                    cue_type=cue_type,
-                    reveal_ratio=reveal_ratio,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    reasoning_config=reasoning_config
-                )
-                
-                cue_traces.append(trace)
-        
+
+        # Extract just the problems
+        problems = [problem for problem, _ in failed_problems]
+
+        print(f"  Batch cue eval: {len(problems)} problems × {len(reveal_ratios)} reveal ratios = {len(problems) * len(reveal_ratios)} total requests")
+
+        # Use batch processing - this will create len(problems) * len(reveal_ratios) requests
+        cue_traces = self.test_problems_batch(
+            problems=problems,
+            model=model,
+            attempt_number=0,  # Special marker for cue attempts
+            cue_type=cue_type,
+            reveal_ratios=reveal_ratios,  # Pass all reveal ratios
+            temperature=temperature,
+            max_tokens=max_tokens,
+            reasoning_config=reasoning_config
+        )
+
         self._save_traces(
             cue_traces,
             self.cue_dir / f"{model.replace('/', '_')}_cue_traces.json"
         )
-        
+
         return cue_traces
     
     def _run_judges(self, traces: List[ReasoningTrace], model: str):
@@ -509,43 +756,76 @@ class QuantumReasoningEval:
         judgeable_traces = [t for t in traces if t.has_output and t.output]
         
         print(f"  Judging {len(judgeable_traces)} traces with output...")
-        
-        for trace in judgeable_traces:
+
+        judge_errors = 0
+        for i, trace in enumerate(judgeable_traces):
             result = {'problem_id': trace.problem_id}
-            
-            # Run correctness and verifiability judges on all traces
-            if trace.cue_type is None:  # No cue = baseline
-                result['correctness'] = self.judge.evaluate(
-                    'reasoning_correctness_judge',
-                    problem=trace.task_description,
-                    reasoning=trace.reasoning,
-                    answer=trace.predicted_answer or '',
-                    correct_answer=trace.expected_answer
-                )
-                
-                result['verifiability'] = self.judge.evaluate(
-                    'cot_verifiability_judge',
-                    problem=trace.task_description,
-                    reasoning_without_answer=trace.reasoning  # Could strip answer here
-                )
-            
-            # Run verbalization judge only on cue traces
-            if trace.cue_type:
-                # Reconstruct cue for judge
-                cue_str, _ = self.cue_generator.generate_cue(
-                    solution_path=trace.expected_answer.split(' → '),
-                    cue_type=trace.cue_type,
-                    reveal_ratio=trace.reveal_ratio
-                )
-                
-                result['verbalization'] = self.judge.evaluate(
-                    'verbalization_judge',
-                    problem=trace.task_description,
-                    cue=cue_str,
-                    reasoning=trace.reasoning
-                )
-            
-            judge_results.append(result)
+
+            try:
+                # Run correctness and verifiability judges on all traces
+                if trace.cue_type is None:  # No cue = baseline
+                    try:
+                        result['correctness'] = self.judge.evaluate(
+                            'reasoning_correctness_judge',
+                            problem=trace.task_description,
+                            reasoning=trace.reasoning,
+                            answer=trace.predicted_answer or '',
+                            correct_answer=trace.expected_answer
+                        )
+                    except Exception as e:
+                        print(f"  Error judging correctness for {trace.problem_id}: {str(e)[:100]}")
+                        result['correctness'] = {'error': str(e)}
+                        judge_errors += 1
+
+                    try:
+                        result['verifiability'] = self.judge.evaluate(
+                            'cot_verifiability_judge',
+                            problem=trace.task_description,
+                            reasoning_without_answer=trace.reasoning  # Could strip answer here
+                        )
+                    except Exception as e:
+                        print(f"  Error judging verifiability for {trace.problem_id}: {str(e)[:100]}")
+                        result['verifiability'] = {'error': str(e)}
+                        judge_errors += 1
+
+                # Run verbalization judge only on cue traces
+                if trace.cue_type:
+                    try:
+                        # Reconstruct cue for judge
+                        cue_str, _ = self.cue_generator.generate_cue(
+                            solution_path=trace.expected_answer.split(' → '),
+                            cue_type=trace.cue_type,
+                            reveal_ratio=trace.reveal_ratio
+                        )
+
+                        result['verbalization'] = self.judge.evaluate(
+                            'verbalization_judge',
+                            problem=trace.problem_id,
+                            cue=cue_str,
+                            reasoning=trace.reasoning
+                        )
+                    except Exception as e:
+                        print(f"  Error judging verbalization for {trace.problem_id}: {str(e)[:100]}")
+                        result['verbalization'] = {'error': str(e)}
+                        judge_errors += 1
+
+                judge_results.append(result)
+
+                # Progress indicator
+                if (i + 1) % 10 == 0:
+                    print(f"  Progress: {i + 1}/{len(judgeable_traces)} traces judged")
+
+            except Exception as e:
+                print(f"  Fatal error judging trace {trace.problem_id}: {str(e)[:100]}")
+                judge_errors += 1
+                # Still add a result to maintain correspondence
+                judge_results.append({
+                    'problem_id': trace.problem_id,
+                    'error': str(e)
+                })
+
+        if judge_errors > 0:
+            print(f"  Warning: {judge_errors} judge evaluations failed")
         
         # Save judge results
         output_path = self.judge_dir / f"{model.replace('/', '_')}_judge_results.json"

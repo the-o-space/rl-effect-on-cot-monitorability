@@ -6,7 +6,7 @@ api:
   # API key should be set via environment variable: OPENROUTER_API_KEY
 
   # Async batch processing settings
-  max_concurrent_requests: 5  # Number of concurrent async requests
+  max_concurrent_requests: 8  # Number of concurrent async requests
 
 # Models
 models:
@@ -19,16 +19,16 @@ models:
 # Progressive evaluation settings
 progressive_eval:
   # Number of problems to generate per complexity level
-  n_problems_per_level: 5
+  n_problems_per_level: 3
 
   # Number of retry attempts for failed problems
-  n_retry_attempts: 5
+  n_retry_attempts: 3
 
   # Sampling temperature
   temperature: 1.0
 
   # Maximum output tokens
-  max_tokens: 8000
+  max_tokens: 10000
 
   # Number of cue examples to test per failed problem
   n_cue_examples: 5

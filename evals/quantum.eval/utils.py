@@ -202,6 +202,16 @@ class OpenRouterClient:
                 **kwargs
             )
 
+            # Check if completion is valid
+            if completion is None:
+                raise Exception("API returned None completion object")
+
+            if not hasattr(completion, 'choices') or completion.choices is None:
+                raise Exception(f"API returned invalid completion: {completion}")
+
+            if len(completion.choices) == 0:
+                raise Exception("API returned empty choices list")
+
             # Extract primary content and optional reasoning (varies by model)
             choice = completion.choices[0].message
             return {
@@ -210,9 +220,13 @@ class OpenRouterClient:
                 "full_response": completion,
             }
 
-            
+
         except Exception as e:
-            raise Exception(f"OpenRouter API call failed for model {model}: {str(e)}")
+            # Include more context in error message
+            error_msg = f"OpenRouter API call failed for model {model}: {str(e)}"
+            if hasattr(e, '__cause__'):
+                error_msg += f" (caused by: {e.__cause__})"
+            raise Exception(error_msg)
 
     
     def get_text_response(self, *args, **kwargs) -> Dict[str, Optional[str]]:
