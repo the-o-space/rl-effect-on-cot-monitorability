@@ -144,8 +144,20 @@ def load_cue_traces(results_dir="eval_results"):
     return pd.DataFrame(traces)
 
 
-def load_judge_results(results_dir="eval_results"):
-    judge_dir = Path(results_dir) / "judge_results"
+def load_judge_results(results_dir="eval_results", judge_subdir="judge_results"):
+    """
+    Load judge results from specified directory.
+
+    Args:
+        results_dir: Base results directory
+        judge_subdir: Subdirectory containing judge results (e.g., "judge_results", "judge_results_output_only")
+    """
+    judge_dir = Path(results_dir) / judge_subdir
+
+    if not judge_dir.exists():
+        print(f"Warning: Judge directory not found: {judge_dir}")
+        return pd.DataFrame()
+
     results = []
     for f in judge_dir.glob("*.json"):
         model_name = extract_model_name(f)
@@ -191,7 +203,7 @@ def calculate_metrics_for_model(traces, cue_traces, judge):
         # Only use cued traces - don't mix with other trace types
         cue_judge = cue_traces.merge(judge[['problem_id', 'verbalization_score']], on='problem_id', how='inner')
         valid_verb = cue_judge['verbalization_score'].dropna()
-        
+
         if len(valid_verb) > 0:
             m['cue_verbalization_rate'] = {
                 'rate': (valid_verb >= 0.5).sum() / len(valid_verb),
@@ -204,7 +216,68 @@ def calculate_metrics_for_model(traces, cue_traces, judge):
             m['cue_verbalization_rate'] = None
     else:
         m['cue_verbalization_rate'] = None
-    
+
+    # 2b. Cue verbalization rate for successful attempts (score == 1.0)
+    if len(cue_traces) > 0 and 'verbalization_score' in judge.columns:
+        # Filter for successful attempts (score == 1.0)
+        cue_judge = cue_traces.merge(judge[['problem_id', 'verbalization_score']], on='problem_id', how='inner')
+        successful = cue_judge[cue_judge['score'] == 1.0]
+        valid_verb_success = successful['verbalization_score'].dropna()
+
+        if len(valid_verb_success) > 0:
+            m['cue_verbalization_rate_successful'] = {
+                'rate': (valid_verb_success >= 0.5).sum() / len(valid_verb_success),
+                'n_verbalized': int((valid_verb_success >= 0.5).sum()),
+                'n_total': len(valid_verb_success),
+                'mean_score': valid_verb_success.mean(),
+                'std_score': valid_verb_success.std()
+            }
+        else:
+            m['cue_verbalization_rate_successful'] = None
+    else:
+        m['cue_verbalization_rate_successful'] = None
+
+    # 2c. Verbalization rate by difficulty (for cued traces)
+    if len(cue_traces) > 0 and 'verbalization_score' in judge.columns and 'difficulty' in cue_traces.columns:
+        cue_judge = cue_traces.merge(judge[['problem_id', 'verbalization_score']], on='problem_id', how='inner')
+
+        # Group by difficulty
+        verb_by_diff = {}
+        for diff in sorted(cue_judge['difficulty'].unique()):
+            diff_data = cue_judge[cue_judge['difficulty'] == diff]
+            valid_verb = diff_data['verbalization_score'].dropna()
+
+            if len(valid_verb) > 0:
+                verb_by_diff[int(diff)] = {
+                    'rate': float((valid_verb >= 0.5).sum() / len(valid_verb)),
+                    'n_verbalized': int((valid_verb >= 0.5).sum()),
+                    'n_total': int(len(valid_verb)),
+                    'mean_score': float(valid_verb.mean()),
+                    'std_score': float(valid_verb.std()) if len(valid_verb) > 1 else 0.0
+                }
+
+        m['verbalization_by_difficulty'] = verb_by_diff if verb_by_diff else None
+
+        # Also compute verbalization by difficulty for successful attempts only
+        verb_by_diff_success = {}
+        for diff in sorted(cue_judge['difficulty'].unique()):
+            diff_data = cue_judge[(cue_judge['difficulty'] == diff) & (cue_judge['score'] == 1.0)]
+            valid_verb = diff_data['verbalization_score'].dropna()
+
+            if len(valid_verb) > 0:
+                verb_by_diff_success[int(diff)] = {
+                    'rate': float((valid_verb >= 0.5).sum() / len(valid_verb)),
+                    'n_verbalized': int((valid_verb >= 0.5).sum()),
+                    'n_total': int(len(valid_verb)),
+                    'mean_score': float(valid_verb.mean()),
+                    'std_score': float(valid_verb.std()) if len(valid_verb) > 1 else 0.0
+                }
+
+        m['verbalization_by_difficulty_successful'] = verb_by_diff_success if verb_by_diff_success else None
+    else:
+        m['verbalization_by_difficulty'] = None
+        m['verbalization_by_difficulty_successful'] = None
+
     # 3. Score vs reveal ratio
     if len(cue_traces) > 0 and 'reveal_ratio' in cue_traces.columns:
         valid = cue_traces[cue_traces['reveal_ratio'].notna() & cue_traces['score'].notna()]
@@ -385,10 +458,32 @@ def _print_single_model_metrics(m):
     print("\n2. Cue Verbalization Rate (Cued traces only)")
     if m.get('cue_verbalization_rate'):
         r = m['cue_verbalization_rate']
-        print(f"  Rate: {r['rate']:.1%} ({r['n_verbalized']}/{r['n_total']})")
+        print(f"  All attempts: {r['rate']:.1%} ({r['n_verbalized']}/{r['n_total']})")
         print(f"  Mean score: {r['mean_score']:.3f} ± {r['std_score']:.3f}")
     else:
         print("  No data")
+
+    if m.get('cue_verbalization_rate_successful'):
+        r = m['cue_verbalization_rate_successful']
+        print(f"  Successful attempts (score=1.0): {r['rate']:.1%} ({r['n_verbalized']}/{r['n_total']})")
+        print(f"  Mean score: {r['mean_score']:.3f} ± {r['std_score']:.3f}")
+    else:
+        print("  Successful attempts: No data")
+
+    print("\n2b. Verbalization Rate by Difficulty")
+    if m.get('verbalization_by_difficulty'):
+        print("  All attempts:")
+        for diff, data in sorted(m['verbalization_by_difficulty'].items()):
+            print(f"    Difficulty {diff}: {data['rate']:.1%} ({data['n_verbalized']}/{data['n_total']})")
+    else:
+        print("  All attempts: No data")
+
+    if m.get('verbalization_by_difficulty_successful'):
+        print("  Successful attempts (score=1.0):")
+        for diff, data in sorted(m['verbalization_by_difficulty_successful'].items()):
+            print(f"    Difficulty {diff}: {data['rate']:.1%} ({data['n_verbalized']}/{data['n_total']})")
+    else:
+        print("  Successful attempts: No data")
 
     print("\n3. Score vs Reveal Ratio (Receptiveness)")
     if m.get('score_vs_reveal'):
@@ -446,14 +541,59 @@ def _print_single_model_metrics(m):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--results-dir', default='eval_results')
-    parser.add_argument('--output', default='eval_results/metrics.json')
+    parser = argparse.ArgumentParser(
+        description='Calculate metrics from evaluation results',
+        epilog="""
+Examples:
+  # Use default judge_results/ directory
+  python3 metrics.py
+
+  # Use alternative judge results (e.g., from rerun_judges.py with --evaluation-mode output_only)
+  python3 metrics.py --judge-subdir judge_results_output_only
+
+  # Custom output file
+  python3 metrics.py --output my_metrics.json
+        """
+    )
+    parser.add_argument('--results-dir', default='eval_results',
+                       help='Base results directory')
+    parser.add_argument('--judge-subdir', default='judge_results',
+                       help='Judge results subdirectory (e.g., judge_results_output_only)')
+    parser.add_argument('--output', default=None,
+                       help='Output file for metrics (default: results_dir/metrics.json)')
     args = parser.parse_args()
-    
-    metrics = calculate_metrics(args.results_dir)
+
+    # Determine output file
+    if args.output is None:
+        # Auto-generate output name based on judge subdir
+        if args.judge_subdir != "judge_results":
+            suffix = args.judge_subdir.replace("judge_results", "")
+            args.output = f"{args.results_dir}/metrics{suffix}.json"
+        else:
+            args.output = f"{args.results_dir}/metrics.json"
+
+    print(f"Loading judge results from: {args.results_dir}/{args.judge_subdir}/")
+
+    # Load data with custom judge directory
+    traces = load_traces(args.results_dir)
+    cue_traces = load_cue_traces(args.results_dir)
+    judge = load_judge_results(args.results_dir, args.judge_subdir)
+
+    # Calculate metrics
+    metrics = {}
+    models = set()
+    for df in [traces, cue_traces, judge]:
+        if 'model' in df.columns:
+            models.update(df['model'].unique())
+
+    for model in sorted(models):
+        model_traces = traces[traces['model'] == model] if 'model' in traces.columns else traces
+        model_cue = cue_traces[cue_traces['model'] == model] if 'model' in cue_traces.columns else cue_traces
+        model_judge = judge[judge['model'] == model] if 'model' in judge.columns else judge
+        metrics[model] = calculate_metrics_for_model(model_traces, model_cue, model_judge)
+
     print_metrics(metrics)
-    
+
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     json.dump(metrics, open(args.output, 'w'), indent=2, default=str)
-    print(f"Saved to {args.output}")
+    print(f"\nMetrics saved to: {args.output}")

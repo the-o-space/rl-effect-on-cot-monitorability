@@ -64,7 +64,8 @@ class QuantumReasoningEval:
         self.judge = Judge(
             client=self.client,
             prompt_loader=self.prompt_loader,
-            judge_model=self.config.get('models.judge_model', 'anthropic/claude-sonnet-4')
+            judge_model=self.config.get('models.judge_model', 'anthropic/claude-sonnet-4'),
+            evaluation_mode=self.config.get('judges.evaluation_mode', 'cot_with_fallback')
         )
 
         # Create output directories
@@ -748,84 +749,100 @@ class QuantumReasoningEval:
         return cue_traces
     
     def _run_judges(self, traces: List[ReasoningTrace], model: str):
-        """Run judges on traces"""
-        
+        """Run judges on traces using batch processing"""
+
         judge_results = []
-        
+
         # Filter traces with output for judging
         judgeable_traces = [t for t in traces if t.has_output and t.output]
-        
-        print(f"  Judging {len(judgeable_traces)} traces with output...")
 
-        judge_errors = 0
+        print(f"  Judging {len(judgeable_traces)} traces with output (batch processing)...")
+
+        # Prepare batch requests
+        judge_requests = []
+        trace_mapping = []  # Maps request index to (trace_idx, judge_type)
+
         for i, trace in enumerate(judgeable_traces):
-            result = {'problem_id': trace.problem_id}
-
-            try:
-                # Run correctness and verifiability judges on all traces
-                if trace.cue_type is None:  # No cue = baseline
-                    try:
-                        result['correctness'] = self.judge.evaluate(
-                            'reasoning_correctness_judge',
-                            problem=trace.task_description,
-                            reasoning=trace.reasoning,
-                            answer=trace.predicted_answer or '',
-                            correct_answer=trace.expected_answer
-                        )
-                    except Exception as e:
-                        print(f"  Error judging correctness for {trace.problem_id}: {str(e)[:100]}")
-                        result['correctness'] = {'error': str(e)}
-                        judge_errors += 1
-
-                    try:
-                        result['verifiability'] = self.judge.evaluate(
-                            'cot_verifiability_judge',
-                            problem=trace.task_description,
-                            reasoning_without_answer=trace.reasoning  # Could strip answer here
-                        )
-                    except Exception as e:
-                        print(f"  Error judging verifiability for {trace.problem_id}: {str(e)[:100]}")
-                        result['verifiability'] = {'error': str(e)}
-                        judge_errors += 1
-
-                # Run verbalization judge only on cue traces
-                if trace.cue_type:
-                    try:
-                        # Reconstruct cue for judge
-                        cue_str, _ = self.cue_generator.generate_cue(
-                            solution_path=trace.expected_answer.split(' → '),
-                            cue_type=trace.cue_type,
-                            reveal_ratio=trace.reveal_ratio
-                        )
-
-                        result['verbalization'] = self.judge.evaluate(
-                            'verbalization_judge',
-                            problem=trace.problem_id,
-                            cue=cue_str,
-                            reasoning=trace.reasoning
-                        )
-                    except Exception as e:
-                        print(f"  Error judging verbalization for {trace.problem_id}: {str(e)[:100]}")
-                        result['verbalization'] = {'error': str(e)}
-                        judge_errors += 1
-
-                judge_results.append(result)
-
-                # Progress indicator
-                if (i + 1) % 10 == 0:
-                    print(f"  Progress: {i + 1}/{len(judgeable_traces)} traces judged")
-
-            except Exception as e:
-                print(f"  Fatal error judging trace {trace.problem_id}: {str(e)[:100]}")
-                judge_errors += 1
-                # Still add a result to maintain correspondence
-                judge_results.append({
-                    'problem_id': trace.problem_id,
-                    'error': str(e)
+            # Run correctness and verifiability judges on all traces
+            if trace.cue_type is None:  # No cue = baseline
+                # Correctness judge
+                judge_requests.append({
+                    'judge_type': 'reasoning_correctness_judge',
+                    'kwargs': {
+                        'problem': trace.task_description,
+                        'reasoning': trace.reasoning,
+                        'output': trace.output,
+                        'answer': trace.predicted_answer or '',
+                        'correct_answer': trace.expected_answer
+                    }
                 })
+                trace_mapping.append((i, 'correctness'))
 
-        if judge_errors > 0:
-            print(f"  Warning: {judge_errors} judge evaluations failed")
+                # Verifiability judge
+                judge_requests.append({
+                    'judge_type': 'cot_verifiability_judge',
+                    'kwargs': {
+                        'problem': trace.task_description,
+                        'reasoning_without_answer': trace.reasoning,
+                        'output': trace.output
+                    }
+                })
+                trace_mapping.append((i, 'verifiability'))
+
+            # Run verbalization judge only on cue traces
+            if trace.cue_type:
+                try:
+                    # Reconstruct cue for judge
+                    cue_str, _ = self.cue_generator.generate_cue(
+                        solution_path=trace.expected_answer.split(' → '),
+                        cue_type=trace.cue_type,
+                        reveal_ratio=trace.reveal_ratio
+                    )
+
+                    judge_requests.append({
+                        'judge_type': 'verbalization_judge',
+                        'kwargs': {
+                            'problem': trace.problem_id,
+                            'cue': cue_str,
+                            'reasoning': trace.reasoning,
+                            'output': trace.output
+                        }
+                    })
+                    trace_mapping.append((i, 'verbalization'))
+                except Exception as e:
+                    print(f"  Error preparing cue for {trace.problem_id}: {str(e)[:100]}")
+
+        # Run batch evaluation
+        if len(judge_requests) > 0:
+            max_concurrent = self.config.get('api.max_concurrent_requests', 8)
+
+            batch_results = self.judge.batch_evaluate(
+                judge_requests,
+                max_concurrent=max_concurrent
+            )
+
+            # Organize results by trace
+            results_by_trace = {}
+            judge_errors = 0
+
+            for (trace_idx, judge_type), result in zip(trace_mapping, batch_results):
+                if trace_idx not in results_by_trace:
+                    results_by_trace[trace_idx] = {
+                        'problem_id': judgeable_traces[trace_idx].problem_id
+                    }
+
+                if result.get('error'):
+                    judge_errors += 1
+
+                results_by_trace[trace_idx][judge_type] = result
+
+            # Convert to list maintaining order
+            judge_results = [results_by_trace[i] for i in sorted(results_by_trace.keys())]
+
+            if judge_errors > 0:
+                print(f"  Warning: {judge_errors} judge evaluations failed")
+        else:
+            print(f"  No traces to judge")
         
         # Save judge results
         output_path = self.judge_dir / f"{model.replace('/', '_')}_judge_results.json"

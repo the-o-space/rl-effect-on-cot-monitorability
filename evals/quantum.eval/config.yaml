@@ -11,7 +11,7 @@ api:
 # Models
 models:
   # Model to evaluate
-  actor_model: "openai/gpt-oss-120b"
+  actor_model: "anthropic/claude-sonnet-4"
 
   # Model to use for judging
   judge_model: "anthropic/claude-sonnet-4.5"
@@ -19,7 +19,7 @@ models:
 # Progressive evaluation settings
 progressive_eval:
   # Number of problems to generate per complexity level
-  n_problems_per_level: 3
+  n_problems_per_level: 5
 
   # Number of retry attempts for failed problems
   n_retry_attempts: 3
@@ -40,14 +40,14 @@ complexity_grid:
   # - [3, 5]
   # - [5, 5]
   # - [7, 7]
-  # - [10, 7]
+  - [10, 7]
   # - [12, 7]
   # - [15, 8]
   # - [20, 9]
   # - [30, 10]
   - [50, 10]
   - [75, 12]
-  #- [100, 13]
+  - [100, 13]
   - [200, 14]
   - [500, 14]
   - [750, 14]
@@ -83,6 +83,13 @@ judges:
   run_verbalization_judge: true
   run_correctness_judge: true
   run_verifiability_judge: true
+
+  # Evaluation mode for judges:
+  # - "cot_only": Use only reasoning field (CoT)
+  # - "output_only": Use only output field (action)
+  # - "cot_with_fallback": Use reasoning if available, otherwise use output
+  # - "cot_and_output": Concatenate reasoning + output for evaluation
+  evaluation_mode: "cot_with_fallback"
 
 # Output settings
 output:

@@ -23,57 +23,113 @@ def get_unique_models(traces, cue_traces, judge):
     return sorted(list(models))
 
 
-def plot_verbalization_rate_by_model(cue_traces, judge, models, out):
+def plot_verbalization_rate_by_model(cue_traces, judge, models, out, eval_mode_label=""):
     """Plot verbalization rate by model (main verbalization plot)"""
     rates = []
     model_names = []
     n_values = []
-    
+
     for model in models:
         model_cue = cue_traces[cue_traces['model'] == model] if 'model' in cue_traces.columns else cue_traces
         model_judge = judge[judge['model'] == model] if 'model' in judge.columns else judge
-        
+
         if len(model_cue) == 0:
             continue
-            
+
         # Match cued traces with verbalization scores
-        merged = model_cue.merge(model_judge[['problem_id', 'verbalization_score']], 
+        merged = model_cue.merge(model_judge[['problem_id', 'verbalization_score']],
                                on='problem_id', how='inner')
         verb_scores = merged['verbalization_score'].dropna()
-        
+
         if len(verb_scores) > 0:
             rate = (verb_scores >= 0.5).mean()
             rates.append(rate)
             model_names.append(model)
             n_values.append(len(verb_scores))
-    
+
     if not rates:
         print("No verbalization data found")
         return
-    
+
     fig, ax = plt.subplots(figsize=(10, 6))
     colors = plt.cm.Set2(np.linspace(0, 1, len(rates)))
     bars = ax.bar(range(len(rates)), rates, color=colors, alpha=0.7, edgecolor='black')
-    
+
     # Add value labels on bars
     for i, (bar, rate, n) in enumerate(zip(bars, rates, n_values)):
         height = bar.get_height()
         ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
                 f'{rate:.1%}\n(n={n})', ha='center', va='bottom', fontweight='bold')
-    
+
     ax.set_xlabel('Model')
     ax.set_ylabel('Verbalization Rate')
-    ax.set_title('Verbalization Rate by Model\n(Cued Traces Only)', fontweight='bold', pad=20)
+    ax.set_title(f'Verbalization Rate by Model{eval_mode_label}\n(Cued Traces Only)', fontweight='bold', pad=20)
     ax.set_xticks(range(len(rates)))
     ax.set_xticklabels(model_names, rotation=45, ha='right')
     ax.set_ylim(0, 1.1)
     ax.grid(axis='y', alpha=0.3)
-    
+
     plt.savefig(out / 'verbalization_rate_by_model.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 
-def plot_judge_metrics_comparison(traces, judge, models, out):
+def plot_verbalization_rate_by_model_successful(cue_traces, judge, models, out, eval_mode_label=""):
+    """Plot verbalization rate by model for successful attempts only (score > 0.5)"""
+    rates = []
+    model_names = []
+    n_values = []
+
+    for model in models:
+        model_cue = cue_traces[cue_traces['model'] == model] if 'model' in cue_traces.columns else cue_traces
+        model_judge = judge[judge['model'] == model] if 'model' in judge.columns else judge
+
+        if len(model_cue) == 0:
+            continue
+
+        # Filter for successful attempts (score > 0.5)
+        successful = model_cue[model_cue['score'] > 0.5]
+
+        if len(successful) == 0:
+            continue
+
+        # Match cued traces with verbalization scores
+        merged = successful.merge(model_judge[['problem_id', 'verbalization_score']],
+                                 on='problem_id', how='inner')
+        verb_scores = merged['verbalization_score'].dropna()
+
+        if len(verb_scores) > 0:
+            rate = (verb_scores >= 0.5).mean()
+            rates.append(rate)
+            model_names.append(model)
+            n_values.append(len(verb_scores))
+
+    if not rates:
+        print("No verbalization data found for successful attempts")
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    colors = plt.cm.Set2(np.linspace(0, 1, len(rates)))
+    bars = ax.bar(range(len(rates)), rates, color=colors, alpha=0.7, edgecolor='black')
+
+    # Add value labels on bars
+    for i, (bar, rate, n) in enumerate(zip(bars, rates, n_values)):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                f'{rate:.1%}\n(n={n})', ha='center', va='bottom', fontweight='bold')
+
+    ax.set_xlabel('Model')
+    ax.set_ylabel('Verbalization Rate')
+    ax.set_title(f'Verbalization Rate by Model{eval_mode_label}\n(Successful Attempts Only: score > 0.5)', fontweight='bold', pad=20)
+    ax.set_xticks(range(len(rates)))
+    ax.set_xticklabels(model_names, rotation=45, ha='right')
+    ax.set_ylim(0, 1.1)
+    ax.grid(axis='y', alpha=0.3)
+
+    plt.savefig(out / 'verbalization_rate_by_model_successful.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+def plot_judge_metrics_comparison(traces, judge, models, out, eval_mode_label=""):
     """Plot judge agreement, completeness, and reasoning scores by model"""
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
     
@@ -162,13 +218,13 @@ def plot_judge_metrics_comparison(traces, judge, models, out):
     else:
         ax3.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax3.transAxes)
         ax3.set_title('Model-Judge Agreement', fontweight='bold')
-    
-    plt.suptitle('Judge Evaluation Metrics by Model', fontsize=16, fontweight='bold')
+
+    plt.suptitle(f'Judge Evaluation Metrics by Model{eval_mode_label}', fontsize=16, fontweight='bold')
     plt.savefig(out / 'judge_metrics_comparison.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 
-def plot_score_uplift_by_reveal_ratio(traces, cue_traces, models, out):
+def plot_score_uplift_by_reveal_ratio(traces, cue_traces, models, out, eval_mode_label=""):
     """Plot score uplift (improvement) as a function of reveal ratio"""
     fig, ax = plt.subplots(figsize=(10, 6))
     colors = plt.cm.Set2(np.linspace(0, 1, len(models)))
@@ -218,7 +274,7 @@ def plot_score_uplift_by_reveal_ratio(traces, cue_traces, models, out):
     ax.axhline(y=0, color='black', linestyle='-', alpha=0.3)  # Zero line
     ax.set_xlabel('Reveal Ratio')
     ax.set_ylabel('Score Uplift (Cued - Original)')
-    ax.set_title('Score Uplift vs Reveal Ratio', fontweight='bold', pad=20)
+    ax.set_title(f'Score Uplift vs Reveal Ratio{eval_mode_label}', fontweight='bold', pad=20)
     ax.set_xlim(-0.05, 1.05)
     ax.legend(loc='best')
     ax.grid(alpha=0.3)
@@ -227,7 +283,105 @@ def plot_score_uplift_by_reveal_ratio(traces, cue_traces, models, out):
     plt.close()
 
 
-def plot_verbalization_summary(cue_traces, judge, models, out):
+def plot_verbalization_vs_complexity(cue_traces, judge, models, out, eval_mode_label=""):
+    """Plot verbalization rate vs task complexity (difficulty) for each model"""
+    fig, ax = plt.subplots(figsize=(12, 6))
+    colors = plt.cm.Set2(np.linspace(0, 1, len(models)))
+
+    for i, model in enumerate(models):
+        model_cue = cue_traces[cue_traces['model'] == model] if 'model' in cue_traces.columns else cue_traces
+        model_judge = judge[judge['model'] == model] if 'model' in judge.columns else judge
+
+        if len(model_cue) == 0:
+            continue
+
+        # Merge cue traces with verbalization scores
+        merged = model_cue.merge(model_judge[['problem_id', 'verbalization_score']],
+                                on='problem_id', how='inner')
+
+        # Group by difficulty and calculate verbalization rate
+        if 'difficulty' in merged.columns:
+            difficulties = sorted(merged['difficulty'].unique())
+            verb_rates = []
+
+            for diff in difficulties:
+                subset = merged[merged['difficulty'] == diff]
+                verb_scores = subset['verbalization_score'].dropna()
+
+                if len(verb_scores) > 0:
+                    rate = (verb_scores >= 0.5).mean()
+                    verb_rates.append(rate)
+                else:
+                    verb_rates.append(np.nan)
+
+            # Plot with markers
+            ax.plot(difficulties, verb_rates, marker='o', linewidth=2, markersize=8,
+                   label=model, color=colors[i], alpha=0.8)
+
+    ax.set_xlabel('Task Complexity (Difficulty)')
+    ax.set_ylabel('Verbalization Rate')
+    ax.set_title(f'Verbalization Rate vs Task Complexity{eval_mode_label}\n(All Cued Attempts)', fontweight='bold', pad=20)
+    ax.set_ylim(-0.05, 1.05)
+    ax.legend(loc='best')
+    ax.grid(alpha=0.3)
+
+    plt.savefig(out / 'verbalization_rate_vs_complexity.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+def plot_verbalization_vs_complexity_successful(cue_traces, judge, models, out, eval_mode_label=""):
+    """Plot verbalization rate vs task complexity for successful attempts (score=1.0) for each model"""
+    fig, ax = plt.subplots(figsize=(12, 6))
+    colors = plt.cm.Set2(np.linspace(0, 1, len(models)))
+
+    for i, model in enumerate(models):
+        model_cue = cue_traces[cue_traces['model'] == model] if 'model' in cue_traces.columns else cue_traces
+        model_judge = judge[judge['model'] == model] if 'model' in judge.columns else judge
+
+        if len(model_cue) == 0:
+            continue
+
+        # Filter for successful attempts only (score == 1.0)
+        successful = model_cue[model_cue['score'] == 1.0]
+
+        # Merge with verbalization scores
+        merged = successful.merge(model_judge[['problem_id', 'verbalization_score']],
+                                 on='problem_id', how='inner')
+
+        # Group by difficulty and calculate verbalization rate
+        if 'difficulty' in merged.columns and len(merged) > 0:
+            difficulties = sorted(merged['difficulty'].unique())
+            verb_rates = []
+            n_counts = []
+
+            for diff in difficulties:
+                subset = merged[merged['difficulty'] == diff]
+                verb_scores = subset['verbalization_score'].dropna()
+
+                if len(verb_scores) > 0:
+                    rate = (verb_scores >= 0.5).mean()
+                    verb_rates.append(rate)
+                    n_counts.append(len(verb_scores))
+                else:
+                    verb_rates.append(np.nan)
+                    n_counts.append(0)
+
+            # Plot with markers
+            ax.plot(difficulties, verb_rates, marker='s', linewidth=2, markersize=8,
+                   label=f'{model} (n={sum(n_counts)})', color=colors[i], alpha=0.8)
+
+    ax.set_xlabel('Task Complexity (Difficulty)')
+    ax.set_ylabel('Verbalization Rate')
+    ax.set_title(f'Verbalization Rate vs Task Complexity{eval_mode_label}\n(Successful Attempts Only: score=1.0)', fontweight='bold', pad=20)
+    ax.set_ylim(-0.05, 1.05)
+    ax.legend(loc='best')
+    ax.grid(alpha=0.3)
+
+    plt.savefig(out / 'verbalization_rate_vs_complexity_successful.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+def plot_verbalization_summary(cue_traces, judge, models, out, eval_mode_label=""):
     """Create a summary plot showing verbalization patterns"""
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
     colors = plt.cm.Set2(np.linspace(0, 1, len(models)))
@@ -355,23 +509,46 @@ def plot_verbalization_summary(cue_traces, judge, models, out):
         ax4.set_ylabel('Verbalization Rate')
         ax4.set_ylim(0, 1.1)
         ax4.grid(axis='y', alpha=0.3)
-    
-    plt.suptitle('Verbalization Analysis Summary', fontsize=16, fontweight='bold')
+
+    plt.suptitle(f'Verbalization Analysis Summary{eval_mode_label}', fontsize=16, fontweight='bold')
     plt.savefig(out / 'verbalization_summary.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 
 
 
-def generate_verbalization_plots(results_dir="eval_results"):
+def infer_evaluation_mode(judge_df):
+    """Infer evaluation mode from judge results metadata"""
+    if 'evaluation_mode' in judge_df.columns:
+        modes = judge_df['evaluation_mode'].dropna().unique()
+        if len(modes) > 0:
+            return modes[0]
+    return None
+
+
+def generate_verbalization_plots(results_dir="eval_results", judge_subdir="judge_results"):
     """Generate focused verbalization analysis plots"""
-    print("Loading data...")
+    print(f"Loading data from {results_dir}/...")
+    print(f"Using judge results from: {judge_subdir}/")
+
     traces = load_traces(results_dir)
     cue_traces = load_cue_traces(results_dir)
-    judge = load_judge_results(results_dir)
+    judge = load_judge_results(results_dir, judge_subdir)
 
-    out = Path(results_dir) / "plots"
+    # Infer evaluation mode from judge data
+    eval_mode = infer_evaluation_mode(judge)
+    eval_mode_label = f" [{eval_mode}]" if eval_mode else ""
+    print(f"Evaluation mode: {eval_mode or 'default'}")
+
+    # Create output directory based on judge subdir
+    if judge_subdir != "judge_results":
+        suffix = judge_subdir.replace("judge_results", "")
+        out = Path(results_dir) / f"plots{suffix}"
+    else:
+        out = Path(results_dir) / "plots"
+
     out.mkdir(parents=True, exist_ok=True)
+    print(f"Saving plots to: {out}/")
 
     # Get unique models
     models = get_unique_models(traces, cue_traces, judge)
@@ -387,13 +564,17 @@ def generate_verbalization_plots(results_dir="eval_results"):
         return
 
     print("\nGenerating verbalization-focused plots...")
-    
+
     # Core verbalization and judge plots
+    # Pass eval_mode_label to plot functions
     plots = [
-        ("Verbalization rate by model", lambda: plot_verbalization_rate_by_model(cue_traces, judge, models, out)),
-        ("Judge metrics comparison", lambda: plot_judge_metrics_comparison(traces, judge, models, out)),
-        ("Score uplift by reveal ratio", lambda: plot_score_uplift_by_reveal_ratio(traces, cue_traces, models, out)),
-        ("Verbalization summary", lambda: plot_verbalization_summary(cue_traces, judge, models, out)),
+        ("Verbalization rate by model", lambda: plot_verbalization_rate_by_model(cue_traces, judge, models, out, eval_mode_label)),
+        ("Verbalization rate by model (successful only)", lambda: plot_verbalization_rate_by_model_successful(cue_traces, judge, models, out, eval_mode_label)),
+        ("Judge metrics comparison", lambda: plot_judge_metrics_comparison(traces, judge, models, out, eval_mode_label)),
+        ("Score uplift by reveal ratio", lambda: plot_score_uplift_by_reveal_ratio(traces, cue_traces, models, out, eval_mode_label)),
+        ("Verbalization summary", lambda: plot_verbalization_summary(cue_traces, judge, models, out, eval_mode_label)),
+        ("Verbalization rate vs complexity", lambda: plot_verbalization_vs_complexity(cue_traces, judge, models, out, eval_mode_label)),
+        ("Verbalization rate vs complexity (successful)", lambda: plot_verbalization_vs_complexity_successful(cue_traces, judge, models, out, eval_mode_label)),
     ]
 
     for name, func in plots:
@@ -413,8 +594,23 @@ def generate_verbalization_plots(results_dir="eval_results"):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--results-dir', default='eval_results')
+    parser = argparse.ArgumentParser(
+        description='Generate verbalization plots',
+        epilog="""
+Examples:
+  # Use default judge_results/ directory
+  python3 visualize.py
+
+  # Use alternative judge results (e.g., from output_only evaluation)
+  python3 visualize.py --judge-subdir judge_results_output_only
+
+  # Plots will be saved to plots_output_only/ automatically
+        """
+    )
+    parser.add_argument('--results-dir', default='eval_results',
+                       help='Base results directory')
+    parser.add_argument('--judge-subdir', default='judge_results',
+                       help='Judge results subdirectory (e.g., judge_results_output_only)')
     args = parser.parse_args()
 
-    generate_verbalization_plots(args.results_dir)
+    generate_verbalization_plots(args.results_dir, args.judge_subdir)
